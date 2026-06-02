@@ -7,16 +7,12 @@ import IOKit
 import Accelerate
 import ArgumentParser
 
-// MARK: - Settings (policy)
-
 enum BrightnessControl: String, Codable, ExpressibleByArgument {
     case auto
     case manual
     case system
 }
 
-/// All tuneable knobs. Fields are `var` so CLI flags and JSON config can
-/// override defaults before the run loop starts.
 struct Settings: Codable {
     var pollIntervalSeconds: TimeInterval = 2.0
     var smoothingWindow: Int = 5
@@ -24,28 +20,23 @@ struct Settings: Codable {
 
     var keyboardMin: Float = 0.0
     var keyboardMax: Float = 1.0
-    var invertKeyboard: Bool = false  // dark room → dimmer keyboard
+    var invertKeyboard: Bool = false
     var keyboardControl: BrightnessControl = .auto
     var manualKeyboardBrightness: Float = 0.5
 
     var screenMin: Float = 0.2
     var screenMax: Float = 1.0
-    var invertScreen: Bool = false    // dark room → dimmer screen
+    var invertScreen: Bool = false
     var screenControl: BrightnessControl = .auto
     var manualScreenBrightness: Float = 0.7
 
-    // Restore-on-exit values (single source of truth — used by restoreDefaults)
     var defaultKeyboardBrightness: Float = 0.5
     var defaultScreenBrightness: Float   = 0.7
 
-    // Privacy / runtime guard
-    var maxCameraRuntimeSeconds: TimeInterval = 3600   // 0 = unlimited
-    var reminderIntervalSeconds: TimeInterval = 900    // 0 = no reminders
+    var maxCameraRuntimeSeconds: TimeInterval = 3600
+    var reminderIntervalSeconds: TimeInterval = 900
 }
 
-// MARK: - CLI + JSON config
-
-/// Loads a JSON config file and returns a Settings with the decoded values.
 func loadConfig(path: String) throws -> Settings {
     let url = URL(fileURLWithPath: path)
     let data = try Data(contentsOf: url)
@@ -116,7 +107,6 @@ struct CLI: ParsableCommand {
         } else {
             s = Settings()
         }
-        // CLI overrides – only applied when explicitly provided
         if let v = pollInterval       { s.pollIntervalSeconds = v }
         if let v = smoothingWindow    { s.smoothingWindow = v }
         if let v = changeThreshold    { s.changeThreshold = v }
@@ -131,7 +121,6 @@ struct CLI: ParsableCommand {
         if let v = defaultKeyboard    { s.defaultKeyboardBrightness = v }
         if let v = defaultScreen      { s.defaultScreenBrightness = v }
         if let v = maxRuntime         { s.maxCameraRuntimeSeconds = v }
-        // Bool flags are always present; only override if they differ from defaults
         s.invertKeyboard = invertKeyboard
         s.invertScreen   = invertScreen
         return s
@@ -144,8 +133,6 @@ struct CLI: ParsableCommand {
 }
 
 CLI.main()
-
-// MARK: - Notifications
 
 func configureNotifications() {
     let center = UNUserNotificationCenter.current()
@@ -164,8 +151,6 @@ func postNotification(title: String, body: String) {
     )
     UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
 }
-
-// MARK: - Subprocess safety
 
 let trustedWorkingDirectory = NSHomeDirectory()
 let safePathEntries = ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"]
@@ -230,8 +215,6 @@ struct ProcessLauncher {
 
 let launcher = ProcessLauncher()
 
-// MARK: - Unified brightness backend
-
 enum BackendKind { case keyboard, screen }
 
 struct BrightnessBackend {
@@ -283,8 +266,6 @@ func detectBackend(kind: BackendKind) -> BrightnessBackend? {
     fputs("Warning: no \(kind) backend found. \(kind) control disabled.\n", stderr)
     return nil
 }
-
-// MARK: - Pure control policy
 
 func mapAmbient(_ ambient: Float, minValue: Float, maxValue: Float, invert: Bool) -> Float {
     invert ? maxValue - ambient * (maxValue - minValue)
@@ -339,8 +320,6 @@ func targetForControl(
     return abs(target - lastValue) > changeThreshold ? target : nil
 }
 
-/// Pure – no I/O. Returns nil for each target when change is below threshold
-/// or that channel is left to system control.
 func computeTargets(
     history: inout RingBuffer,
     ambientNow: Float,
@@ -375,8 +354,6 @@ func computeTargets(
     )
 }
 
-// MARK: - Runtime guard
-
 /// Called exclusively from the main thread. Thread-safety note: `maybeRemind`
 /// writes `lastReminder` only from the main run loop; `BrightnessSampler`
 /// callbacks run on a separate DispatchQueue and never touch RuntimeGuard.
@@ -406,8 +383,6 @@ final class RuntimeGuard {
         lastReminder = Date()
     }
 }
-
-// MARK: - Webcam sampling
 
 final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let session = AVCaptureSession()
@@ -484,8 +459,6 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         lock.unlock()
     }
 }
-
-// MARK: - Main loop (called by CLI.run)
 
 func mainLoop(settings: Settings) throws {
     configureNotifications()

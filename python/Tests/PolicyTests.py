@@ -12,9 +12,6 @@ import pytest
 from python.Sources.main import map_ambient, compute_targets, Settings
 
 
-# ---------------------------------------------------------------------------
-# map_ambient
-# ---------------------------------------------------------------------------
 
 class MapAmbientTests:
     def test_no_invert_min(self):
@@ -27,7 +24,6 @@ class MapAmbientTests:
         assert map_ambient(0.5, 0.0, 1.0, invert=False) == pytest.approx(0.5)
 
     def test_invert_min(self):
-        # ambient=0, invert=True → max output (inverted mapping, not the default)
         assert map_ambient(0.0, 0.0, 1.0, invert=True) == pytest.approx(1.0)
 
     def test_invert_max(self):
@@ -37,14 +33,10 @@ class MapAmbientTests:
         assert map_ambient(0.5, 0.0, 1.0, invert=True) == pytest.approx(0.5)
 
     def test_clamping_not_done_here(self):
-        # map_ambient is a pure linear map; clamping is the backend's job
         result = map_ambient(2.0, 0.0, 1.0, invert=False)
         assert result == pytest.approx(2.0)
 
 
-# ---------------------------------------------------------------------------
-# compute_targets
-# ---------------------------------------------------------------------------
 
 def _default_settings(**overrides) -> Settings:
     s = Settings()
@@ -67,11 +59,9 @@ class ComputeTargetsTests:
     def test_no_change_below_threshold(self):
         h = self._history()
         s = _default_settings(change_threshold=0.05)
-        # Prime history
         compute_targets(h, 0.5, -1.0, -1.0, s)
-        # Second call with same ambient → computed targets barely change
         kbd, scr = compute_targets(h, 0.5, 0.5, 0.3, s)
-        assert kbd is None  # delta < 0.05
+        assert kbd is None
 
     def test_change_above_threshold_triggers(self):
         h = self._history()
@@ -89,13 +79,11 @@ class ComputeTargetsTests:
                                smoothing_window=5,
                                keyboard_min=0.0, keyboard_max=1.0,
                                invert_keyboard=False)
-        # Fill window with 0.5
         for _ in range(5):
             compute_targets(h, 0.5, -1.0, -1.0, s)
-        # Spike to 1.0; smoothed = (4*0.5 + 1.0) / 5 = 0.6
         kbd, _ = compute_targets(h, 1.0, 0.5, 0.5, s)
         if kbd is not None:
-            assert abs(kbd - 0.5) < 0.2  # smoothed, not a full jump to 1.0
+            assert abs(kbd - 0.5) < 0.2
 
     def test_history_appended(self):
         h = self._history(window=3)

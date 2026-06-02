@@ -1,9 +1,7 @@
 import XCTest
 
-// ---------------------------------------------------------------------------
 // Inline the pure functions under test so the test target compiles standalone
 // without depending on the executable target (which has top-level expressions).
-// ---------------------------------------------------------------------------
 
 enum BrightnessControl {
     case auto
@@ -14,7 +12,7 @@ enum BrightnessControl {
 struct Settings {
     var keyboardMin: Float = 0.0
     var keyboardMax: Float = 1.0
-    var invertKeyboard: Bool = false  // dark room → dimmer keyboard (default)
+    var invertKeyboard: Bool = false
     var keyboardControl: BrightnessControl = .auto
     var manualKeyboardBrightness: Float = 0.5
     var screenMin: Float = 0.2
@@ -99,9 +97,6 @@ func computeTargets(
     )
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 final class MapAmbientTests: XCTestCase {
     func testNoInvertMin() {
@@ -114,7 +109,6 @@ final class MapAmbientTests: XCTestCase {
         XCTAssertEqual(mapAmbient(0.5, minValue: 0.0, maxValue: 1.0, invert: false), 0.5, accuracy: 1e-5)
     }
     func testInvertMin() {
-        // invert=true, ambient=0 → maxValue (inverted mapping, not the default behaviour)
         XCTAssertEqual(mapAmbient(0.0, minValue: 0.0, maxValue: 1.0, invert: true), 1.0, accuracy: 1e-5)
     }
     func testInvertMax() {
@@ -169,7 +163,6 @@ final class ComputeTargetsTests: XCTestCase {
             _ = computeTargets(history: &h, ambientNow: 0.5,
                                lastKeyboard: -1.0, lastScreen: -1.0, s: s)
         }
-        // Spike to 1.0; smoothed = (4*0.5 + 1.0)/5 = 0.6
         let (kbd, _) = computeTargets(history: &h, ambientNow: 1.0,
                                       lastKeyboard: 0.5, lastScreen: 0.5, s: s)
         if let kbd = kbd {
@@ -178,7 +171,6 @@ final class ComputeTargetsTests: XCTestCase {
     }
 
     func testKeyboardDarkRoomDim() {
-        // invertKeyboard=false (default): dark room (ambient=0) → keyboardMin (0.0)
         var h = makeHistory()
         var s = Settings()
         s.invertKeyboard = false
@@ -191,7 +183,6 @@ final class ComputeTargetsTests: XCTestCase {
     }
 
     func testKeyboardBrightRoomBright() {
-        // invertKeyboard=false (default): bright room (ambient=1) → keyboardMax (1.0)
         var h = makeHistory()
         var s = Settings()
         s.invertKeyboard = false

@@ -12,13 +12,11 @@ Dependencies:
 
 Keyboard backend (install one):
     brew install kbrightness
-    # OR
     brew tap rakalex/mac-brightnessctl && brew install mac-brightnessctl
 
 Screen backend (install one):
-    brew install brightness          # built-in display
-    # OR
-    brew install ddcctl              # external DDC-capable displays
+    brew install brightness
+    brew install ddcctl
 
 macOS Camera Permission:
     System Settings → Privacy & Security → Camera → grant Terminal/IDE access
@@ -63,9 +61,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Policy (everything the user might want to tune)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Settings:
@@ -77,23 +72,21 @@ class Settings:
 
     keyboard_min: float = 0.0
     keyboard_max: float = 1.0
-    invert_keyboard: bool = False   # dark room → dimmer keyboard
-    keyboard_control: str = "auto"  # auto | manual | system
+    invert_keyboard: bool = False
+    keyboard_control: str = "auto"
     manual_keyboard_brightness: float = 0.5
 
     screen_min: float = 0.2
     screen_max: float = 1.0
-    invert_screen: bool = False     # dark room → dimmer screen
-    screen_control: str = "auto"    # auto | manual | system
+    invert_screen: bool = False
+    screen_control: str = "auto"
     manual_screen_brightness: float = 0.7
 
-    # Restore-on-exit values
     default_keyboard_brightness: float = 0.5
     default_screen_brightness: float = 0.7
 
-    # Privacy / runtime guard
-    max_runtime_sec: float = 3600.0     # 0 = unlimited
-    reminder_interval_sec: float = 900.0  # 0 = no reminders
+    max_runtime_sec: float = 3600.0
+    reminder_interval_sec: float = 900.0
 
 
 def _load_config(path: str) -> dict:
@@ -121,7 +114,6 @@ def _build_settings(args: argparse.Namespace) -> Settings:
             if hasattr(s, key):
                 setattr(s, key, type(getattr(s, key))(value))
 
-    # Apply only flags explicitly provided on the command line.
     cli = vars(args)
     for key, value in cli.items():
         if key == "config" or value is None:
@@ -187,9 +179,6 @@ def _parse_args() -> argparse.Namespace:
 DEFAULT_SETTINGS = Settings()
 
 
-# ---------------------------------------------------------------------------
-# Subprocess safety
-# ---------------------------------------------------------------------------
 
 # SAFE_EXEC_DIRS is the canonical list; SAFE_ENV["PATH"] is the string form
 # passed to shutil.which (which expects a colon-separated string, not a list).
@@ -207,7 +196,7 @@ def _resolve_executable(name: str) -> Optional[str]:
     resolved = shutil.which(name, path=SAFE_ENV["PATH"])
     if not resolved:
         return None
-    real = os.path.realpath(resolved)  # follow symlinks fully
+    real = os.path.realpath(resolved)
     if any(
         real.startswith(prefix + os.sep) or real == prefix
         for prefix in SAFE_EXEC_DIRS
@@ -217,15 +206,12 @@ def _resolve_executable(name: str) -> Optional[str]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Unified brightness backend
-# ---------------------------------------------------------------------------
 
 @dataclass
 class BrightnessBackend:
     """Wraps a CLI tool that accepts a normalised [0, 1] brightness value."""
     name: str
-    executable: str          # resolved absolute path, set at construction
+    executable: str
     args_builder: Callable[[float], List[str]]
     out_min: float
     out_max: float
@@ -234,7 +220,6 @@ class BrightnessBackend:
         return float(min(max(value, self.out_min), self.out_max))
 
 
-# Candidate templates – executable is filled in by detect_backend.
 _KEYBOARD_CANDIDATES = [
     ("kbrightness",       lambda v: [f"{v:.3f}"],          0.0, 1.0),
     ("mac-brightnessctl", lambda v: [str(int(v * 100))],   0.0, 1.0),
@@ -288,9 +273,6 @@ def run_backend(backend: BrightnessBackend, value: float, label: str) -> None:
         log.warning("Failed to set %s via %s: %s", label, backend.name, stderr)
 
 
-# ---------------------------------------------------------------------------
-# Pure control policy
-# ---------------------------------------------------------------------------
 
 def map_ambient(ambient: float, out_min: float, out_max: float, invert: bool) -> float:
     if invert:
@@ -358,9 +340,6 @@ def compute_targets(
     return new_kbd, new_scr
 
 
-# ---------------------------------------------------------------------------
-# Privacy / runtime guard
-# ---------------------------------------------------------------------------
 
 class RuntimeGuard:
     """Centralises camera-runtime reminders and optional auto-stop."""
@@ -386,9 +365,6 @@ class RuntimeGuard:
             self._last_reminder = now
 
 
-# ---------------------------------------------------------------------------
-# Camera sampling
-# ---------------------------------------------------------------------------
 
 def capture_mean_brightness(cap, n_frames: int = 3) -> float:
     """Average luma across n_frames. No inter-frame sleep — callers throttle
@@ -406,9 +382,6 @@ def capture_mean_brightness(cap, n_frames: int = 3) -> float:
     return float(np.mean(values)) if values else 0.5
 
 
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
 
 def main_loop(s: Settings = DEFAULT_SETTINGS) -> None:
     import cv2
@@ -488,8 +461,8 @@ def main_loop(s: Settings = DEFAULT_SETTINGS) -> None:
         cap.release()
 
 
-_map_value = map_ambient  # Backward-compatible alias for older imports.
-run = main_loop  # Backward-compatible alias for the original Python entry point.
+_map_value = map_ambient
+run = main_loop
 
 
 if __name__ == "__main__":
