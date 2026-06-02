@@ -3,7 +3,8 @@
 Date: 2026-05-23
 
 ## Scope
-- `ambient_backlight.py`
+- `python/Sources/main.py`
+- `ambient_backlight.py` compatibility launcher
 - `swift/Sources/main.swift`
 
 ## Findings

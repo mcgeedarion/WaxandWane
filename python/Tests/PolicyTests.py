@@ -1,44 +1,44 @@
-"""Unit tests for pure policy functions in ambient_backlight.py.
+"""Unit tests for pure policy functions in python/Sources/main.py.
 
-Run with:  python -m pytest tests/
+Run with:  python -m pytest python/Tests
 """
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from collections import deque
 import pytest
-from ambient_backlight import _map_value, compute_targets, Settings
+from python.Sources.main import map_ambient, compute_targets, Settings
 
 
 # ---------------------------------------------------------------------------
-# _map_value
+# map_ambient
 # ---------------------------------------------------------------------------
 
-class TestMapValue:
+class MapAmbientTests:
     def test_no_invert_min(self):
-        assert _map_value(0.0, 0.2, 1.0, invert=False) == pytest.approx(0.2)
+        assert map_ambient(0.0, 0.2, 1.0, invert=False) == pytest.approx(0.2)
 
     def test_no_invert_max(self):
-        assert _map_value(1.0, 0.2, 1.0, invert=False) == pytest.approx(1.0)
+        assert map_ambient(1.0, 0.2, 1.0, invert=False) == pytest.approx(1.0)
 
     def test_no_invert_mid(self):
-        assert _map_value(0.5, 0.0, 1.0, invert=False) == pytest.approx(0.5)
+        assert map_ambient(0.5, 0.0, 1.0, invert=False) == pytest.approx(0.5)
 
     def test_invert_min(self):
         # ambient=0, invert=True → max output (inverted mapping, not the default)
-        assert _map_value(0.0, 0.0, 1.0, invert=True) == pytest.approx(1.0)
+        assert map_ambient(0.0, 0.0, 1.0, invert=True) == pytest.approx(1.0)
 
     def test_invert_max(self):
-        assert _map_value(1.0, 0.0, 1.0, invert=True) == pytest.approx(0.0)
+        assert map_ambient(1.0, 0.0, 1.0, invert=True) == pytest.approx(0.0)
 
     def test_invert_mid(self):
-        assert _map_value(0.5, 0.0, 1.0, invert=True) == pytest.approx(0.5)
+        assert map_ambient(0.5, 0.0, 1.0, invert=True) == pytest.approx(0.5)
 
     def test_clamping_not_done_here(self):
-        # _map_value is a pure linear map; clamping is the backend's job
-        result = _map_value(2.0, 0.0, 1.0, invert=False)
+        # map_ambient is a pure linear map; clamping is the backend's job
+        result = map_ambient(2.0, 0.0, 1.0, invert=False)
         assert result == pytest.approx(2.0)
 
 
@@ -53,7 +53,7 @@ def _default_settings(**overrides) -> Settings:
     return s
 
 
-class TestComputeTargets:
+class ComputeTargetsTests:
     def _history(self, window: int = 5) -> deque:
         return deque(maxlen=window)
 

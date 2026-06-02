@@ -8,12 +8,28 @@ on ambient light estimated from the built-in webcam.
 | Path | Language | Recommended use |
 |---|---|---|
 | `swift/` | Swift (native) | **Primary — use this for daily use / LaunchAgent** |
-| `ambient_backlight.py` | Python | Reference / developer script |
+| `python/` | Python | Reference / developer implementation mirroring the Swift layout |
+| `ambient_backlight.py` | Python | Compatibility launcher for existing scripts |
 
-Both share the same algorithm and security model.  Prefer the Swift binary
+Both share the same algorithm, security model, and mirrored source layout (`Sources/main.*` plus `Tests/PolicyTests.*`) where language conventions allow. Prefer the Swift binary
 for production because it uses AVFoundation natively (no pip dependencies,
 no OpenCV), integrates with Notification Center, and compiles to a standalone
 executable.
+
+## Cross-language Layout
+
+The Python and Swift implementations intentionally use matching file and test
+names where practical:
+
+| Concern | Swift | Python |
+|---|---|---|
+| Main entry point | `swift/Sources/main.swift` | `python/Sources/main.py` |
+| Policy tests | `swift/Tests/PolicyTests.swift` | `python/Tests/PolicyTests.py` |
+| Compatibility launcher | N/A | `ambient_backlight.py` |
+
+Core policy symbols also use matching names adapted to language style, such as
+`mapAmbient` in Swift and `map_ambient` in Python, with `ComputeTargetsTests`
+and `MapAmbientTests` in both test suites.
 
 ## How It Works
 
@@ -99,24 +115,26 @@ Press `Ctrl+C` to stop. Keyboard and screen brightness restore to defaults.
 ```bash
 pip install opencv-python numpy
 python3 ambient_backlight.py
+# or run the canonical mirrored entry point directly:
+python3 python/Sources/main.py
 ```
 
 ### Configuration
 
 Edit the `Settings` struct in `swift/Sources/main.swift` (or the `Settings`
-dataclass in `ambient_backlight.py`):
+dataclass in `python/Sources/main.py`):
 
 | Field | Default | Description |
 |---|---|---|
-| `pollIntervalSeconds` | `2.0` | Seconds between samples |
-| `smoothingWindow` | `5` | Rolling-average window size |
-| `changeThreshold` | `0.02` | Min brightness delta to trigger a write |
-| `keyboardMin/Max` | `0.0 / 1.0` | Keyboard output range |
-| `screenMin/Max` | `0.2 / 1.0` | Screen output range |
-| `invertKeyboard` | `true` | Dark room → brighter keyboard |
-| `invertScreen` | `false` | Dark room → dimmer screen |
-| `maxCameraRuntimeSeconds` | `3600` | Auto-stop after N seconds (0 = unlimited) |
-| `reminderIntervalSeconds` | `900` | Notification reminder cadence (0 = off) |
+| `pollIntervalSeconds` / `poll_interval_sec` | `2.0` | Seconds between samples |
+| `smoothingWindow` / `smoothing_window` | `5` | Rolling-average window size |
+| `changeThreshold` / `change_threshold` | `0.02` | Min brightness delta to trigger a write |
+| `keyboardMin/Max` / `keyboard_min/max` | `0.0 / 1.0` | Keyboard output range |
+| `screenMin/Max` / `screen_min/max` | `0.2 / 1.0` | Screen output range |
+| `invertKeyboard` / `invert_keyboard` | `false` | Dark room → dimmer keyboard |
+| `invertScreen` / `invert_screen` | `false` | Dark room → dimmer screen |
+| `maxCameraRuntimeSeconds` / `max_runtime_sec` | `3600` | Auto-stop after N seconds (0 = unlimited) |
+| `reminderIntervalSeconds` / `reminder_interval_sec` | `900` | Notification reminder cadence (0 = off) |
 
 ## Run as a Background Service (LaunchAgent)
 
