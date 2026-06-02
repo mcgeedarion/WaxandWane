@@ -130,3 +130,23 @@ class ComputeTargetsTests:
                                change_threshold=0.0)
         _, scr = compute_targets(h, 1.0, -1.0, -1.0, s)
         assert scr == pytest.approx(1.0)
+
+    def test_manual_keyboard_does_not_affect_screen(self):
+        h = self._history()
+        s = _default_settings(keyboard_control="manual",
+                               manual_keyboard_brightness=0.25,
+                               screen_control="system",
+                               change_threshold=0.0)
+        kbd, scr = compute_targets(h, 1.0, -1.0, -1.0, s)
+        assert kbd == pytest.approx(0.25)
+        assert scr is None
+
+    def test_manual_screen_does_not_affect_keyboard(self):
+        h = self._history()
+        s = _default_settings(keyboard_control="system",
+                               screen_control="manual",
+                               manual_screen_brightness=0.8,
+                               change_threshold=0.0)
+        kbd, scr = compute_targets(h, 0.0, -1.0, -1.0, s)
+        assert kbd is None
+        assert scr == pytest.approx(0.8)

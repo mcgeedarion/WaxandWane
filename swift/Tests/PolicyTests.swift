@@ -5,13 +5,23 @@ import XCTest
 // without depending on the executable target (which has top-level expressions).
 // ---------------------------------------------------------------------------
 
+enum BrightnessControl {
+    case auto
+    case manual
+    case system
+}
+
 struct Settings {
     var keyboardMin: Float = 0.0
     var keyboardMax: Float = 1.0
     var invertKeyboard: Bool = false  // dark room → dimmer keyboard (default)
+    var keyboardControl: BrightnessControl = .auto
+    var manualKeyboardBrightness: Float = 0.5
     var screenMin: Float = 0.2
     var screenMax: Float = 1.0
     var invertScreen: Bool = false
+    var screenControl: BrightnessControl = .auto
+    var manualScreenBrightness: Float = 0.7
     var changeThreshold: Float = 0.02
     var smoothingWindow: Int = 5
 }
@@ -46,6 +56,28 @@ func mapAmbient(_ ambient: Float, minValue: Float, maxValue: Float, invert: Bool
            : minValue + ambient * (maxValue - minValue)
 }
 
+func targetForControl(
+    control: BrightnessControl,
+    smoothedAmbient: Float,
+    lastValue: Float,
+    minValue: Float,
+    maxValue: Float,
+    invert: Bool,
+    manualValue: Float,
+    changeThreshold: Float
+) -> Float? {
+    let target: Float
+    switch control {
+    case .system:
+        return nil
+    case .manual:
+        target = manualValue
+    case .auto:
+        target = mapAmbient(smoothedAmbient, minValue: minValue, maxValue: maxValue, invert: invert)
+    }
+    return abs(target - lastValue) > changeThreshold ? target : nil
+}
+
 func computeTargets(
     history: inout RingBuffer,
     ambientNow: Float,
@@ -55,11 +87,15 @@ func computeTargets(
 ) -> (keyboard: Float?, screen: Float?) {
     history.append(ambientNow)
     let smoothed = history.mean
-    let kbd = mapAmbient(smoothed, minValue: s.keyboardMin, maxValue: s.keyboardMax, invert: s.invertKeyboard)
-    let scr = mapAmbient(smoothed, minValue: s.screenMin,   maxValue: s.screenMax,   invert: s.invertScreen)
     return (
-        abs(kbd - lastKeyboard) > s.changeThreshold ? kbd : nil,
-        abs(scr - lastScreen)   > s.changeThreshold ? scr : nil
+        targetForControl(control: s.keyboardControl, smoothedAmbient: smoothed,
+                         lastValue: lastKeyboard, minValue: s.keyboardMin,
+                         maxValue: s.keyboardMax, invert: s.invertKeyboard,
+                         manualValue: s.manualKeyboardBrightness, changeThreshold: s.changeThreshold),
+        targetForControl(control: s.screenControl, smoothedAmbient: smoothed,
+                         lastValue: lastScreen, minValue: s.screenMin,
+                         maxValue: s.screenMax, invert: s.invertScreen,
+                         manualValue: s.manualScreenBrightness, changeThreshold: s.changeThreshold)
     )
 }
 
@@ -177,6 +213,33 @@ final class ComputeTargetsTests: XCTestCase {
         let (_, scr) = computeTargets(history: &h, ambientNow: 1.0,
                                       lastKeyboard: -1.0, lastScreen: -1.0, s: s)
         XCTAssertEqual(scr ?? -1, 1.0, accuracy: 1e-5)
+    }
+
+
+    func testManualKeyboardDoesNotAffectScreen() {
+        var h = makeHistory()
+        var s = Settings()
+        s.keyboardControl = .manual
+        s.manualKeyboardBrightness = 0.25
+        s.screenControl = .system
+        s.changeThreshold = 0.0
+        let (kbd, scr) = computeTargets(history: &h, ambientNow: 1.0,
+                                        lastKeyboard: -1.0, lastScreen: -1.0, s: s)
+        XCTAssertEqual(kbd ?? -1, 0.25, accuracy: 1e-5)
+        XCTAssertNil(scr)
+    }
+
+    func testManualScreenDoesNotAffectKeyboard() {
+        var h = makeHistory()
+        var s = Settings()
+        s.keyboardControl = .system
+        s.screenControl = .manual
+        s.manualScreenBrightness = 0.8
+        s.changeThreshold = 0.0
+        let (kbd, scr) = computeTargets(history: &h, ambientNow: 0.0,
+                                        lastKeyboard: -1.0, lastScreen: -1.0, s: s)
+        XCTAssertNil(kbd)
+        XCTAssertEqual(scr ?? -1, 0.8, accuracy: 1e-5)
     }
 
     func testRingBufferFill() {

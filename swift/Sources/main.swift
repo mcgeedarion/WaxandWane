@@ -9,6 +9,12 @@ import ArgumentParser
 
 // MARK: - Settings (policy)
 
+enum BrightnessControl: String, Codable, ExpressibleByArgument {
+    case auto
+    case manual
+    case system
+}
+
 /// All tuneable knobs. Fields are `var` so CLI flags and JSON config can
 /// override defaults before the run loop starts.
 struct Settings: Codable {
@@ -19,10 +25,14 @@ struct Settings: Codable {
     var keyboardMin: Float = 0.0
     var keyboardMax: Float = 1.0
     var invertKeyboard: Bool = false  // dark room → dimmer keyboard
+    var keyboardControl: BrightnessControl = .auto
+    var manualKeyboardBrightness: Float = 0.5
 
     var screenMin: Float = 0.2
     var screenMax: Float = 1.0
     var invertScreen: Bool = false    // dark room → dimmer screen
+    var screenControl: BrightnessControl = .auto
+    var manualScreenBrightness: Float = 0.7
 
     // Restore-on-exit values (single source of truth — used by restoreDefaults)
     var defaultKeyboardBrightness: Float = 0.5
@@ -69,6 +79,12 @@ struct CLI: ParsableCommand {
     @Flag(name: .long, inversion: .prefixedWith, help: "Invert keyboard mapping (bright→dark)")
     var invertKeyboard: Bool = false
 
+    @Option(name: .long, help: "Keyboard mode: ambient auto, fixed manual, or leave to system")
+    var keyboardControl: BrightnessControl? = nil
+
+    @Option(name: .long, help: "Fixed keyboard brightness when --keyboard-control manual [0-1]")
+    var manualKeyboard: Float? = nil
+
     @Option(name: .long, help: "Screen brightness lower bound [0-1]")
     var screenMin: Float? = nil
 
@@ -77,6 +93,12 @@ struct CLI: ParsableCommand {
 
     @Flag(name: .long, inversion: .prefixedWith, help: "Invert screen mapping")
     var invertScreen: Bool = false
+
+    @Option(name: .long, help: "Screen mode: ambient auto, fixed manual, or leave to system")
+    var screenControl: BrightnessControl? = nil
+
+    @Option(name: .long, help: "Fixed screen brightness when --screen-control manual [0-1]")
+    var manualScreen: Float? = nil
 
     @Option(name: .long, help: "Keyboard brightness restored on exit [0-1]")
     var defaultKeyboard: Float? = nil
@@ -100,8 +122,12 @@ struct CLI: ParsableCommand {
         if let v = changeThreshold    { s.changeThreshold = v }
         if let v = keyboardMin        { s.keyboardMin = v }
         if let v = keyboardMax        { s.keyboardMax = v }
+        if let v = keyboardControl    { s.keyboardControl = v }
+        if let v = manualKeyboard     { s.manualKeyboardBrightness = v }
         if let v = screenMin          { s.screenMin = v }
         if let v = screenMax          { s.screenMax = v }
+        if let v = screenControl      { s.screenControl = v }
+        if let v = manualScreen       { s.manualScreenBrightness = v }
         if let v = defaultKeyboard    { s.defaultKeyboardBrightness = v }
         if let v = defaultScreen      { s.defaultScreenBrightness = v }
         if let v = maxRuntime         { s.maxCameraRuntimeSeconds = v }
@@ -291,7 +317,30 @@ struct RingBuffer {
     var isEmpty: Bool { count == 0 }
 }
 
-/// Pure – no I/O. Returns nil for each target when change is below threshold.
+func targetForControl(
+    control: BrightnessControl,
+    smoothedAmbient: Float,
+    lastValue: Float,
+    minValue: Float,
+    maxValue: Float,
+    invert: Bool,
+    manualValue: Float,
+    changeThreshold: Float
+) -> Float? {
+    let target: Float
+    switch control {
+    case .system:
+        return nil
+    case .manual:
+        target = manualValue
+    case .auto:
+        target = mapAmbient(smoothedAmbient, minValue: minValue, maxValue: maxValue, invert: invert)
+    }
+    return abs(target - lastValue) > changeThreshold ? target : nil
+}
+
+/// Pure – no I/O. Returns nil for each target when change is below threshold
+/// or that channel is left to system control.
 func computeTargets(
     history: inout RingBuffer,
     ambientNow: Float,
@@ -302,12 +351,27 @@ func computeTargets(
     history.append(ambientNow)
     let smoothed = history.mean
 
-    let kbd = mapAmbient(smoothed, minValue: s.keyboardMin, maxValue: s.keyboardMax, invert: s.invertKeyboard)
-    let scr = mapAmbient(smoothed, minValue: s.screenMin,   maxValue: s.screenMax,   invert: s.invertScreen)
-
     return (
-        abs(kbd - lastKeyboard) > s.changeThreshold ? kbd : nil,
-        abs(scr - lastScreen)   > s.changeThreshold ? scr : nil
+        targetForControl(
+            control: s.keyboardControl,
+            smoothedAmbient: smoothed,
+            lastValue: lastKeyboard,
+            minValue: s.keyboardMin,
+            maxValue: s.keyboardMax,
+            invert: s.invertKeyboard,
+            manualValue: s.manualKeyboardBrightness,
+            changeThreshold: s.changeThreshold
+        ),
+        targetForControl(
+            control: s.screenControl,
+            smoothedAmbient: smoothed,
+            lastValue: lastScreen,
+            minValue: s.screenMin,
+            maxValue: s.screenMax,
+            invert: s.invertScreen,
+            manualValue: s.manualScreenBrightness,
+            changeThreshold: s.changeThreshold
+        )
     )
 }
 
@@ -426,17 +490,24 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
 func mainLoop(settings: Settings) throws {
     configureNotifications()
 
-    let keyboardBackend = detectBackend(kind: .keyboard)
-    let screenBackend   = detectBackend(kind: .screen)
+    let keyboardEnabled = settings.keyboardControl != .system
+    let screenEnabled = settings.screenControl != .system
+    let keyboardBackend = keyboardEnabled ? detectBackend(kind: .keyboard) : nil
+    let screenBackend = screenEnabled ? detectBackend(kind: .screen) : nil
 
-    if keyboardBackend == nil && screenBackend == nil {
-        fputs("Error: no output backends available. Install keyboard/screen brightness tools.\n", stderr)
+    if !keyboardEnabled && !screenEnabled {
+        fputs("Error: keyboard and screen are both set to system control; nothing to adjust.\n", stderr)
+        exit(1)
+    }
+
+    if (keyboardEnabled && keyboardBackend == nil) && (screenEnabled && screenBackend == nil) {
+        fputs("Error: no enabled output backends available. Install a backend or set that channel to system control.\n", stderr)
         exit(1)
     }
 
     func restoreDefaults() {
-        keyboardBackend?.set(settings.defaultKeyboardBrightness)
-        screenBackend?.set(settings.defaultScreenBrightness)
+        if settings.keyboardControl != .system { keyboardBackend?.set(settings.defaultKeyboardBrightness) }
+        if settings.screenControl != .system { screenBackend?.set(settings.defaultScreenBrightness) }
     }
 
     let semaphore = DispatchSemaphore(value: 0)
@@ -508,8 +579,14 @@ func mainLoop(settings: Settings) throws {
         }
 
         let smoothed = history.isEmpty ? ambientNow : history.mean
-        print(String(format: "Ambient: %.3f → Keyboard: %.0f%% | Screen: %.0f%%",
-                     smoothed, lastKeyboard * 100, lastScreen * 100))
+        let keyboardStatus = settings.keyboardControl == .system
+            ? "system"
+            : String(format: "%.0f%%", lastKeyboard * 100)
+        let screenStatus = settings.screenControl == .system
+            ? "system"
+            : String(format: "%.0f%%", lastScreen * 100)
+        print(String(format: "Ambient: %.3f → Keyboard: %@ | Screen: %@",
+                     smoothed, keyboardStatus, screenStatus))
 
         Thread.sleep(forTimeInterval: settings.pollIntervalSeconds)
     }

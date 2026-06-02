@@ -33,9 +33,13 @@ Config file (JSON, all keys optional):
       "keyboard_min": 0.0,
       "keyboard_max": 1.0,
       "invert_keyboard": false,
+      "keyboard_control": "auto",
+      "manual_keyboard_brightness": 0.5,
       "screen_min": 0.2,
       "screen_max": 1.0,
       "invert_screen": false,
+      "screen_control": "auto",
+      "manual_screen_brightness": 0.7,
       "default_keyboard_brightness": 0.5,
       "default_screen_brightness": 0.7,
       "max_runtime_sec": 3600.0,
@@ -74,10 +78,14 @@ class Settings:
     keyboard_min: float = 0.0
     keyboard_max: float = 1.0
     invert_keyboard: bool = False   # dark room → dimmer keyboard
+    keyboard_control: str = "auto"  # auto | manual | system
+    manual_keyboard_brightness: float = 0.5
 
     screen_min: float = 0.2
     screen_max: float = 1.0
     invert_screen: bool = False     # dark room → dimmer screen
+    screen_control: str = "auto"    # auto | manual | system
+    manual_screen_brightness: float = 0.7
 
     # Restore-on-exit values
     default_keyboard_brightness: float = 0.5
@@ -121,6 +129,11 @@ def _build_settings(args: argparse.Namespace) -> Settings:
         if hasattr(s, key):
             setattr(s, key, value)
 
+    for key in ("keyboard_control", "screen_control"):
+        value = getattr(s, key)
+        if value not in {"auto", "manual", "system"}:
+            raise ValueError(f"{key} must be one of: auto, manual, system")
+
     return s
 
 
@@ -145,6 +158,10 @@ def _parse_args() -> argparse.Namespace:
                    metavar="0-1")
     p.add_argument("--keyboard-max",    dest="keyboard_max",        type=float, default=None,
                    metavar="0-1")
+    p.add_argument("--keyboard-control", dest="keyboard_control", choices=("auto", "manual", "system"),
+                   default=None, help="Keyboard mode: ambient auto, fixed manual, or leave to system")
+    p.add_argument("--manual-keyboard", dest="manual_keyboard_brightness", type=float, default=None,
+                   metavar="0-1", help="Fixed keyboard brightness when --keyboard-control=manual")
     p.add_argument("--invert-keyboard", dest="invert_keyboard",     type=lambda x: x.lower() != "false",
                    default=None,         metavar="true|false",
                    help="Invert keyboard mapping (bright→dark)")
@@ -152,6 +169,10 @@ def _parse_args() -> argparse.Namespace:
                    metavar="0-1")
     p.add_argument("--screen-max",      dest="screen_max",          type=float, default=None,
                    metavar="0-1")
+    p.add_argument("--screen-control", dest="screen_control", choices=("auto", "manual", "system"),
+                   default=None, help="Screen mode: ambient auto, fixed manual, or leave to system")
+    p.add_argument("--manual-screen", dest="manual_screen_brightness", type=float, default=None,
+                   metavar="0-1", help="Fixed screen brightness when --screen-control=manual")
     p.add_argument("--invert-screen",   dest="invert_screen",       type=lambda x: x.lower() != "false",
                    default=None,         metavar="true|false")
     p.add_argument("--default-keyboard",dest="default_keyboard_brightness", type=float, default=None,
@@ -277,6 +298,29 @@ def map_ambient(ambient: float, out_min: float, out_max: float, invert: bool) ->
     return out_min + ambient * (out_max - out_min)
 
 
+def target_for_control(
+    control: str,
+    smoothed_ambient: float,
+    last_value: float,
+    minimum: float,
+    maximum: float,
+    invert: bool,
+    manual_value: float,
+    change_threshold: float,
+) -> Optional[float]:
+    """Return the target for one brightness channel, or None if untouched."""
+    if control == "system":
+        return None
+    if control == "manual":
+        target = manual_value
+    elif control == "auto":
+        target = map_ambient(smoothed_ambient, minimum, maximum, invert)
+    else:
+        raise ValueError(f"Unsupported brightness control mode: {control}")
+
+    return target if abs(target - last_value) > change_threshold else None
+
+
 def compute_targets(
     history: deque,
     ambient_now: float,
@@ -286,16 +330,31 @@ def compute_targets(
 ) -> Tuple[Optional[float], Optional[float]]:
     """
     Return (new_keyboard, new_screen) or None for each if change is below
-    threshold.  Pure – no I/O.
+    threshold or that channel is left to system control. Pure – no I/O.
     """
     history.append(ambient_now)
     smoothed = sum(history) / len(history) if history else 0.0
 
-    kbd = map_ambient(smoothed, s.keyboard_min, s.keyboard_max, s.invert_keyboard)
-    scr = map_ambient(smoothed, s.screen_min,   s.screen_max,   s.invert_screen)
-
-    new_kbd = kbd if abs(kbd - last_keyboard) > s.change_threshold else None
-    new_scr = scr if abs(scr - last_screen)  > s.change_threshold else None
+    new_kbd = target_for_control(
+        s.keyboard_control,
+        smoothed,
+        last_keyboard,
+        s.keyboard_min,
+        s.keyboard_max,
+        s.invert_keyboard,
+        s.manual_keyboard_brightness,
+        s.change_threshold,
+    )
+    new_scr = target_for_control(
+        s.screen_control,
+        smoothed,
+        last_screen,
+        s.screen_min,
+        s.screen_max,
+        s.invert_screen,
+        s.manual_screen_brightness,
+        s.change_threshold,
+    )
     return new_kbd, new_scr
 
 
@@ -353,14 +412,19 @@ def capture_mean_brightness(cap, n_frames: int = 3) -> float:
 
 def main_loop(s: Settings = DEFAULT_SETTINGS) -> None:
     import cv2
-    keyboard_backend = detect_backend(_KEYBOARD_CANDIDATES, "keyboard")
-    screen_backend   = detect_backend(_SCREEN_CANDIDATES,   "screen")
+    keyboard_enabled = s.keyboard_control != "system"
+    screen_enabled = s.screen_control != "system"
+    keyboard_backend = (
+        detect_backend(_KEYBOARD_CANDIDATES, "keyboard") if keyboard_enabled else None
+    )
+    screen_backend = detect_backend(_SCREEN_CANDIDATES, "screen") if screen_enabled else None
 
-    if keyboard_backend is None and screen_backend is None:
-        log.error(
-            "No output backends available. "
-            "Install at least one keyboard or screen brightness backend."
-        )
+    if not keyboard_enabled and not screen_enabled:
+        log.error("Keyboard and screen are both set to system control; nothing to adjust.")
+        sys.exit(1)
+
+    if (keyboard_enabled and keyboard_backend is None) and (screen_enabled and screen_backend is None):
+        log.error("No enabled output backends available. Install a backend or set that channel to system control.")
         sys.exit(1)
 
     cap = cv2.VideoCapture(s.camera_index)
@@ -382,9 +446,9 @@ def main_loop(s: Settings = DEFAULT_SETTINGS) -> None:
     guard = RuntimeGuard(s)
 
     def restore_defaults() -> None:
-        if keyboard_backend:
+        if keyboard_backend and s.keyboard_control != "system":
             run_backend(keyboard_backend, s.default_keyboard_brightness, "keyboard brightness")
-        if screen_backend:
+        if screen_backend and s.screen_control != "system":
             run_backend(screen_backend, s.default_screen_brightness, "screen brightness")
 
     log.info("Ambient loop started. Ctrl+C to stop.")
@@ -409,10 +473,10 @@ def main_loop(s: Settings = DEFAULT_SETTINGS) -> None:
                 last_screen = new_scr
 
             log.info(
-                "Ambient: %.3f → Keyboard: %.3f | Screen: %.3f",
+                "Ambient: %.3f → Keyboard: %s | Screen: %s",
                 sum(history) / len(history) if history else ambient,
-                last_keyboard,
-                last_screen,
+                "system" if s.keyboard_control == "system" else f"{last_keyboard:.3f}",
+                "system" if s.screen_control == "system" else f"{last_screen:.3f}",
             )
 
             time.sleep(s.poll_interval_sec)

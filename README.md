@@ -35,8 +35,9 @@ and `MapAmbientTests` in both test suites.
 
 1. **Webcam → ambient light**: Samples camera frames, extracts luma (Y plane
    in Swift, HSV-V in Python), averages across a rolling window.
-2. **Policy mapping**: Maps the smoothed ambient value to keyboard/screen
-   brightness with configurable min/max and optional inversion.
+2. **Policy mapping**: Independently maps the smoothed ambient value to keyboard
+   and/or screen brightness with configurable min/max and optional inversion.
+   Each channel can also be fixed manually or left to system control.
 3. **Threshold guard**: Only writes when brightness changes by > 2% to avoid
    constant subprocess churn.
 4. **Privacy guard**: Sends a Notification Center banner on start and
@@ -108,7 +109,17 @@ swift build -c release
 .build/release/AmbientBacklight
 ```
 
-Press `Ctrl+C` to stop. Keyboard and screen brightness restore to defaults.
+Press `Ctrl+C` to stop. Channels controlled by AutoKeyboardDim restore to defaults.
+
+Run only one channel manually while leaving the other under system control:
+
+```bash
+# Fix display brightness and leave keyboard backlight untouched.
+.build/release/AmbientBacklight --screen-control manual --manual-screen 0.7 --keyboard-control system
+
+# Fix keyboard backlight and leave display brightness untouched.
+.build/release/AmbientBacklight --keyboard-control manual --manual-keyboard 0.4 --screen-control system
+```
 
 ### Python (script / dev)
 
@@ -132,7 +143,11 @@ dataclass in `python/Sources/main.py`):
 | `keyboardMin/Max` / `keyboard_min/max` | `0.0 / 1.0` | Keyboard output range |
 | `screenMin/Max` / `screen_min/max` | `0.2 / 1.0` | Screen output range |
 | `invertKeyboard` / `invert_keyboard` | `false` | Dark room → dimmer keyboard |
+| `keyboardControl` / `keyboard_control` | `auto` | Keyboard mode: `auto`, `manual`, or `system` |
+| `manualKeyboardBrightness` / `manual_keyboard_brightness` | `0.5` | Fixed keyboard brightness for manual mode |
 | `invertScreen` / `invert_screen` | `false` | Dark room → dimmer screen |
+| `screenControl` / `screen_control` | `auto` | Screen mode: `auto`, `manual`, or `system` |
+| `manualScreenBrightness` / `manual_screen_brightness` | `0.7` | Fixed screen brightness for manual mode |
 | `maxCameraRuntimeSeconds` / `max_runtime_sec` | `3600` | Auto-stop after N seconds (0 = unlimited) |
 | `reminderIntervalSeconds` / `reminder_interval_sec` | `900` | Notification reminder cadence (0 = off) |
 
