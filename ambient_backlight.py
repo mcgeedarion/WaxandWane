@@ -22,15 +22,36 @@ Screen backend (install one):
 
 macOS Camera Permission:
     System Settings → Privacy & Security → Camera → grant Terminal/IDE access
+
+Config file (JSON, all keys optional):
+    {
+      "poll_interval_sec": 2.0,
+      "smoothing_window": 5,
+      "camera_index": 0,
+      "capture_frames": 3,
+      "change_threshold": 0.02,
+      "keyboard_min": 0.0,
+      "keyboard_max": 1.0,
+      "invert_keyboard": true,
+      "screen_min": 0.2,
+      "screen_max": 1.0,
+      "invert_screen": false,
+      "default_keyboard_brightness": 0.5,
+      "default_screen_brightness": 0.7,
+      "max_runtime_sec": 3600.0,
+      "reminder_interval_sec": 900.0
+    }
 """
 
+import argparse
 import cv2
+import json
 import numpy as np
 import subprocess
 import time
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from collections import deque
 from typing import Callable, Optional, List, Tuple
 import os
@@ -67,6 +88,82 @@ class Settings:
     # Privacy / runtime guard
     max_runtime_sec: float = 3600.0     # 0 = unlimited
     reminder_interval_sec: float = 900.0  # 0 = no reminders
+
+
+def _load_config(path: str) -> dict:
+    """Load a JSON config file and return its contents as a dict."""
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Config file must be a JSON object, got {type(data).__name__}")
+    unknown = set(data) - set(asdict(Settings()).keys())
+    if unknown:
+        log.warning("Unknown config keys (ignored): %s", ", ".join(sorted(unknown)))
+    return data
+
+
+def _build_settings(args: argparse.Namespace) -> Settings:
+    """Merge JSON config (if given) with CLI overrides into a Settings object.
+
+    Priority: CLI flags > JSON config > built-in defaults.
+    """
+    s = Settings()
+
+    if args.config:
+        cfg = _load_config(args.config)
+        for key, value in cfg.items():
+            if hasattr(s, key):
+                setattr(s, key, type(getattr(s, key))(value))
+
+    # Apply only flags explicitly provided on the command line.
+    defaults = vars(args.__class__())  # empty namespace – not available directly
+    cli = vars(args)
+    for key, value in cli.items():
+        if key == "config" or value is None:
+            continue
+        if hasattr(s, key):
+            setattr(s, key, value)
+
+    return s
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="AutoKeyboardDim – ambient-light keyboard/screen brightness daemon",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--config", metavar="PATH",
+                   help="JSON config file (CLI flags override)")
+    p.add_argument("--poll-interval",   dest="poll_interval_sec",   type=float, default=None,
+                   metavar="SEC",        help="Seconds between brightness updates")
+    p.add_argument("--smoothing-window",dest="smoothing_window",    type=int,   default=None,
+                   metavar="N",          help="Number of samples to average")
+    p.add_argument("--camera-index",    dest="camera_index",        type=int,   default=None,
+                   metavar="N",          help="OpenCV camera index")
+    p.add_argument("--capture-frames",  dest="capture_frames",      type=int,   default=None,
+                   metavar="N",          help="Frames to grab per poll")
+    p.add_argument("--change-threshold",dest="change_threshold",    type=float, default=None,
+                   metavar="0-1",        help="Minimum brightness delta to trigger update")
+    p.add_argument("--keyboard-min",    dest="keyboard_min",        type=float, default=None,
+                   metavar="0-1")
+    p.add_argument("--keyboard-max",    dest="keyboard_max",        type=float, default=None,
+                   metavar="0-1")
+    p.add_argument("--invert-keyboard", dest="invert_keyboard",     type=lambda x: x.lower() != "false",
+                   default=None,         metavar="true|false",
+                   help="Invert keyboard mapping (dark→bright)")
+    p.add_argument("--screen-min",      dest="screen_min",          type=float, default=None,
+                   metavar="0-1")
+    p.add_argument("--screen-max",      dest="screen_max",          type=float, default=None,
+                   metavar="0-1")
+    p.add_argument("--invert-screen",   dest="invert_screen",       type=lambda x: x.lower() != "false",
+                   default=None,         metavar="true|false")
+    p.add_argument("--default-keyboard",dest="default_keyboard_brightness", type=float, default=None,
+                   metavar="0-1",        help="Keyboard brightness restored on exit")
+    p.add_argument("--default-screen",  dest="default_screen_brightness",   type=float, default=None,
+                   metavar="0-1",        help="Screen brightness restored on exit")
+    p.add_argument("--max-runtime",     dest="max_runtime_sec",     type=float, default=None,
+                   metavar="SEC",        help="Stop after this many seconds (0=unlimited)")
+    return p.parse_args()
 
 
 DEFAULT_SETTINGS = Settings()
@@ -328,4 +425,4 @@ def run(s: Settings = DEFAULT_SETTINGS) -> None:
 
 
 if __name__ == "__main__":
-    run()
+    run(_build_settings(_parse_args()))

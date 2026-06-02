@@ -5,32 +5,119 @@ import UserNotifications
 import CoreVideo
 import IOKit
 import Accelerate
+import ArgumentParser
 
 // MARK: - Settings (policy)
 
-struct Settings {
-    let pollIntervalSeconds: TimeInterval = 2.0
-    let smoothingWindow: Int = 5
-    let changeThreshold: Float = 0.02
+/// All tuneable knobs. Fields are `var` so CLI flags and JSON config can
+/// override defaults before the run loop starts.
+struct Settings: Codable {
+    var pollIntervalSeconds: TimeInterval = 2.0
+    var smoothingWindow: Int = 5
+    var changeThreshold: Float = 0.02
 
-    let keyboardMin: Float = 0.0
-    let keyboardMax: Float = 1.0
-    let invertKeyboard: Bool = true   // dark room → brighter keyboard
+    var keyboardMin: Float = 0.0
+    var keyboardMax: Float = 1.0
+    var invertKeyboard: Bool = true   // dark room → brighter keyboard
 
-    let screenMin: Float = 0.2
-    let screenMax: Float = 1.0
-    let invertScreen: Bool = false    // dark room → dimmer screen
+    var screenMin: Float = 0.2
+    var screenMax: Float = 1.0
+    var invertScreen: Bool = false    // dark room → dimmer screen
 
     // Restore-on-exit values (single source of truth — used by restoreDefaults)
-    let defaultKeyboardBrightness: Float = 0.5
-    let defaultScreenBrightness: Float   = 0.7
+    var defaultKeyboardBrightness: Float = 0.5
+    var defaultScreenBrightness: Float   = 0.7
 
     // Privacy / runtime guard
-    let maxCameraRuntimeSeconds: TimeInterval = 3600   // 0 = unlimited
-    let reminderIntervalSeconds: TimeInterval = 900    // 0 = no reminders
+    var maxCameraRuntimeSeconds: TimeInterval = 3600   // 0 = unlimited
+    var reminderIntervalSeconds: TimeInterval = 900    // 0 = no reminders
 }
 
-let settings = Settings()
+// MARK: - CLI + JSON config
+
+/// Loads a JSON config file and returns a Settings with the decoded values.
+func loadConfig(path: String) throws -> Settings {
+    let url = URL(fileURLWithPath: path)
+    let data = try Data(contentsOf: url)
+    return try JSONDecoder().decode(Settings.self, from: data)
+}
+
+struct CLI: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "ambient-backlight",
+        abstract: "Adjust keyboard/screen brightness based on ambient light."
+    )
+
+    @Option(help: "JSON config file path (CLI flags override)")
+    var config: String? = nil
+
+    @Option(name: .long, help: "Seconds between brightness updates")
+    var pollInterval: Double? = nil
+
+    @Option(name: .long, help: "Smoothing window size (number of samples)")
+    var smoothingWindow: Int? = nil
+
+    @Option(name: .long, help: "Minimum brightness delta to trigger an update")
+    var changeThreshold: Float? = nil
+
+    @Option(name: .long, help: "Keyboard brightness lower bound [0-1]")
+    var keyboardMin: Float? = nil
+
+    @Option(name: .long, help: "Keyboard brightness upper bound [0-1]")
+    var keyboardMax: Float? = nil
+
+    @Flag(name: .long, inversion: .prefixedWith, help: "Invert keyboard mapping (dark→bright)")
+    var invertKeyboard: Bool = true
+
+    @Option(name: .long, help: "Screen brightness lower bound [0-1]")
+    var screenMin: Float? = nil
+
+    @Option(name: .long, help: "Screen brightness upper bound [0-1]")
+    var screenMax: Float? = nil
+
+    @Flag(name: .long, inversion: .prefixedWith, help: "Invert screen mapping")
+    var invertScreen: Bool = false
+
+    @Option(name: .long, help: "Keyboard brightness restored on exit [0-1]")
+    var defaultKeyboard: Float? = nil
+
+    @Option(name: .long, help: "Screen brightness restored on exit [0-1]")
+    var defaultScreen: Float? = nil
+
+    @Option(name: .long, help: "Stop after this many seconds (0 = unlimited)")
+    var maxRuntime: Double? = nil
+
+    func buildSettings() throws -> Settings {
+        var s: Settings
+        if let path = config {
+            s = try loadConfig(path: path)
+        } else {
+            s = Settings()
+        }
+        // CLI overrides – only applied when explicitly provided
+        if let v = pollInterval       { s.pollIntervalSeconds = v }
+        if let v = smoothingWindow    { s.smoothingWindow = v }
+        if let v = changeThreshold    { s.changeThreshold = v }
+        if let v = keyboardMin        { s.keyboardMin = v }
+        if let v = keyboardMax        { s.keyboardMax = v }
+        if let v = screenMin          { s.screenMin = v }
+        if let v = screenMax          { s.screenMax = v }
+        if let v = defaultKeyboard    { s.defaultKeyboardBrightness = v }
+        if let v = defaultScreen      { s.defaultScreenBrightness = v }
+        if let v = maxRuntime         { s.maxCameraRuntimeSeconds = v }
+        // Bool flags are always present; only override if they differ from defaults
+        s.invertKeyboard = invertKeyboard
+        s.invertScreen   = invertScreen
+        return s
+    }
+
+    mutating func run() throws {
+        let settings = try buildSettings()
+        try mainLoop(settings: settings)
+    }
+}
+
+CLI.main()
 
 // MARK: - Notifications
 
@@ -67,7 +154,6 @@ func resolveExecutable(_ command: String) -> String? {
             .appendingPathComponent(command).path
         guard fm.isExecutableFile(atPath: candidate) else { continue }
         let real = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
-        // Validate the symlink target is still inside a trusted directory.
         let inTrusted = safePathEntries.contains { prefix in
             real == prefix || real.hasPrefix(prefix + "/")
         }
@@ -93,8 +179,6 @@ func sanitizedEnvironment() -> [String: String] {
     return env
 }
 
-/// Single entry-point for all subprocess invocations.
-/// Always uses the hardened cwd + sanitized environment.
 struct ProcessLauncher {
     private let cwd = URL(fileURLWithPath: trustedWorkingDirectory)
     private let env = sanitizedEnvironment()
@@ -337,96 +421,96 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
     }
 }
 
-// MARK: - Entry point
+// MARK: - Main loop (called by CLI.run)
 
-configureNotifications()
+func mainLoop(settings: Settings) throws {
+    configureNotifications()
 
-let keyboardBackend = detectBackend(kind: .keyboard)
-let screenBackend   = detectBackend(kind: .screen)
+    let keyboardBackend = detectBackend(kind: .keyboard)
+    let screenBackend   = detectBackend(kind: .screen)
 
-if keyboardBackend == nil && screenBackend == nil {
-    fputs("Error: no output backends available. Install keyboard/screen brightness tools.\n", stderr)
-    exit(1)
-}
-
-func restoreDefaults() {
-    keyboardBackend?.set(settings.defaultKeyboardBrightness)
-    screenBackend?.set(settings.defaultScreenBrightness)
-}
-
-// Request camera permission
-let semaphore = DispatchSemaphore(value: 0)
-AVCaptureDevice.requestAccess(for: .video) { granted in
-    if !granted {
-        fputs("Camera access denied.\nSystem Settings → Privacy & Security → Camera\n", stderr)
+    if keyboardBackend == nil && screenBackend == nil {
+        fputs("Error: no output backends available. Install keyboard/screen brightness tools.\n", stderr)
+        exit(1)
     }
-    semaphore.signal()
-}
-semaphore.wait()
 
-guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { exit(1) }
-
-let sampler = BrightnessSampler()
-do {
-    try sampler.start()
-} catch {
-    fputs("Camera error: \(error.localizedDescription)\n", stderr)
-    exit(1)
-}
-
-postNotification(
-    title: "AutoKeyboardDim",
-    body: "Camera is now active to adjust keyboard and screen brightness."
-)
-
-var history = RingBuffer(capacity: settings.smoothingWindow)
-var lastKeyboard: Float = -1.0
-var lastScreen:   Float = -1.0
-let runtimeGuard = RuntimeGuard(s: settings)
-
-// Graceful shutdown on Ctrl+C
-let sigSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-signal(SIGINT, SIG_IGN)
-sigSrc.setEventHandler {
-    print("\nRestoring defaults…")
-    restoreDefaults()
-    sampler.stop()
-    exit(0)
-}
-sigSrc.resume()
-
-print("Ambient backlight running (camera active). Press Ctrl+C to stop.\n")
-
-while true {
-    if runtimeGuard.shouldExit {
-        print("Max runtime reached. Stopping.")
-        restoreDefaults()
-        sampler.stop()
-        break
+    func restoreDefaults() {
+        keyboardBackend?.set(settings.defaultKeyboardBrightness)
+        screenBackend?.set(settings.defaultScreenBrightness)
     }
-    runtimeGuard.maybeRemind()
 
-    let ambientNow = sampler.currentBrightness
-    let (newKbd, newScr) = computeTargets(
-        history: &history,
-        ambientNow: ambientNow,
-        lastKeyboard: lastKeyboard,
-        lastScreen: lastScreen,
-        s: settings
+    let semaphore = DispatchSemaphore(value: 0)
+    AVCaptureDevice.requestAccess(for: .video) { granted in
+        if !granted {
+            fputs("Camera access denied.\nSystem Settings → Privacy & Security → Camera\n", stderr)
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+
+    guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { exit(1) }
+
+    let sampler = BrightnessSampler()
+    do {
+        try sampler.start()
+    } catch {
+        fputs("Camera error: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+
+    postNotification(
+        title: "AutoKeyboardDim",
+        body: "Camera is now active to adjust keyboard and screen brightness."
     )
 
-    if let v = newKbd {
-        keyboardBackend?.set(v)
-        lastKeyboard = v
-    }
-    if let v = newScr {
-        screenBackend?.set(v)
-        lastScreen = v
-    }
+    var history = RingBuffer(capacity: settings.smoothingWindow)
+    var lastKeyboard: Float = -1.0
+    var lastScreen:   Float = -1.0
+    let runtimeGuard = RuntimeGuard(s: settings)
 
-    let smoothed = history.isEmpty ? ambientNow : history.mean
-    print(String(format: "Ambient: %.3f → Keyboard: %.0f%% | Screen: %.0f%%",
-                 smoothed, lastKeyboard * 100, lastScreen * 100))
+    let sigSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    signal(SIGINT, SIG_IGN)
+    sigSrc.setEventHandler {
+        print("\nRestoring defaults…")
+        restoreDefaults()
+        sampler.stop()
+        exit(0)
+    }
+    sigSrc.resume()
 
-    Thread.sleep(forTimeInterval: settings.pollIntervalSeconds)
+    print("Ambient backlight running (camera active). Press Ctrl+C to stop.\n")
+
+    while true {
+        if runtimeGuard.shouldExit {
+            print("Max runtime reached. Stopping.")
+            restoreDefaults()
+            sampler.stop()
+            break
+        }
+        runtimeGuard.maybeRemind()
+
+        let ambientNow = sampler.currentBrightness
+        let (newKbd, newScr) = computeTargets(
+            history: &history,
+            ambientNow: ambientNow,
+            lastKeyboard: lastKeyboard,
+            lastScreen: lastScreen,
+            s: settings
+        )
+
+        if let v = newKbd {
+            keyboardBackend?.set(v)
+            lastKeyboard = v
+        }
+        if let v = newScr {
+            screenBackend?.set(v)
+            lastScreen = v
+        }
+
+        let smoothed = history.isEmpty ? ambientNow : history.mean
+        print(String(format: "Ambient: %.3f → Keyboard: %.0f%% | Screen: %.0f%%",
+                     smoothed, lastKeyboard * 100, lastScreen * 100))
+
+        Thread.sleep(forTimeInterval: settings.pollIntervalSeconds)
+    }
 }
