@@ -54,7 +54,7 @@ func loadConfig(path: String) throws -> Settings {
 
 struct CLI: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "ambient-backlight",
+        commandName: "wax-and-wane",
         abstract: "Adjust keyboard/screen brightness based on ambient light."
     )
 
@@ -400,7 +400,7 @@ final class RuntimeGuard {
               Date().timeIntervalSince(lastReminder) >= reminderInterval
         else { return }
         postNotification(
-            title: "AutoKeyboardDim",
+            title: "Wax and Wane",
             body: "Camera is active. Press Ctrl+C to stop."
         )
         lastReminder = Date()
@@ -411,7 +411,7 @@ final class RuntimeGuard {
 
 final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let session = AVCaptureSession()
-    private let queue   = DispatchQueue(label: "com.ambientbacklight.camera", qos: .utility)
+    private let queue   = DispatchQueue(label: "com.waxandwane.camera", qos: .utility)
     private var _brightness: Float = 0.5
     private let lock = NSLock()
 
@@ -427,13 +427,13 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         guard let device = AVCaptureDevice.default(
             .builtInWideAngleCamera, for: .video, position: .unspecified
         ) else {
-            throw NSError(domain: "AmbientBacklight", code: 1,
+            throw NSError(domain: "WaxAndWane", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "No camera found"])
         }
 
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
-            throw NSError(domain: "AmbientBacklight", code: 2,
+            throw NSError(domain: "WaxAndWane", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Cannot add camera input"])
         }
         session.addInput(input)
@@ -446,7 +446,7 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         output.setSampleBufferDelegate(self, queue: queue)
 
         guard session.canAddOutput(output) else {
-            throw NSError(domain: "AmbientBacklight", code: 3,
+            throw NSError(domain: "WaxAndWane", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: "Cannot add video output"])
         }
         session.addOutput(output)
@@ -530,7 +530,7 @@ func mainLoop(settings: Settings) throws {
     }
 
     postNotification(
-        title: "AutoKeyboardDim",
+        title: "Wax and Wane",
         body: "Camera is now active to adjust keyboard and screen brightness."
     )
 

@@ -1,4 +1,4 @@
-# AutoKeyboardDim
+# Wax and Wane
 
 Automatically adjusts macOS keyboard backlight and display brightness based
 on ambient light estimated from the built-in webcam.
@@ -106,19 +106,19 @@ Grant your terminal / app camera access:
 ```bash
 cd swift
 swift build -c release
-.build/release/AmbientBacklight
+.build/release/WaxAndWane
 ```
 
-Press `Ctrl+C` to stop. Channels controlled by AutoKeyboardDim restore to defaults.
+Press `Ctrl+C` to stop. Channels controlled by Wax and Wane restore to defaults.
 
 Run only one channel manually while leaving the other under system control:
 
 ```bash
 # Fix display brightness and leave keyboard backlight untouched.
-.build/release/AmbientBacklight --screen-control manual --manual-screen 0.7 --keyboard-control system
+.build/release/WaxAndWane --screen-control manual --manual-screen 0.7 --keyboard-control system
 
 # Fix keyboard backlight and leave display brightness untouched.
-.build/release/AmbientBacklight --keyboard-control manual --manual-keyboard 0.4 --screen-control system
+.build/release/WaxAndWane --keyboard-control manual --manual-keyboard 0.4 --screen-control system
 ```
 
 ### Python (script / dev)
@@ -154,17 +154,17 @@ dataclass in `python/Sources/main.py`):
 ## Run as a Background Service (LaunchAgent)
 
 1. Build the Swift binary: `cd swift && swift build -c release`
-2. Edit `com.user.ambientbacklight.plist` — set the `ProgramArguments` path
-   to the compiled binary, e.g. `/Users/you/AutoKeyboardDim/swift/.build/release/AmbientBacklight`.
+2. Edit `com.user.waxandwane.plist` — set the `ProgramArguments` path
+   to the compiled binary, e.g. `/Users/you/Wax and Wane/swift/.build/release/WaxAndWane`.
 3. Install and load:
 
 ```bash
-cp com.user.ambientbacklight.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.user.ambientbacklight.plist
+cp com.user.waxandwane.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.user.waxandwane.plist
 ```
 
 To stop:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.user.ambientbacklight.plist
+launchctl unload ~/Library/LaunchAgents/com.user.waxandwane.plist
 ```

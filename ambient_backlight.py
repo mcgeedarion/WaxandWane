@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for the Python AutoKeyboardDim implementation.
+"""Compatibility launcher for the Python Wax and Wane implementation.
 
 The canonical Python source now mirrors the Swift layout at
 ``python/Sources/main.py``. Keep this wrapper so existing commands that run

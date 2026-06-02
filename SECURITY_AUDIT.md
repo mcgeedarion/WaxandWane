@@ -1,4 +1,4 @@
-# Security Review: AutoKeyboardDim
+# Security Review: Wax and Wane
 
 Date: 2026-05-23
 
