@@ -139,7 +139,7 @@ def _build_settings(args: argparse.Namespace) -> Settings:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="AutoKeyboardDim – ambient-light keyboard/screen brightness daemon",
+        description="Wax and Wane – ambient-light keyboard/screen brightness daemon",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--config", metavar="PATH",
@@ -380,7 +380,7 @@ class RuntimeGuard:
         now = time.monotonic()
         if now - self._last_reminder >= self._remind:
             log.info(
-                "[Reminder] AutoKeyboardDim is using the camera. "
+                "[Reminder] Wax and Wane is using the camera. "
                 "Press Ctrl+C to stop."
             )
             self._last_reminder = now

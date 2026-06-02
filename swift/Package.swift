@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "AmbientBacklight",
+    name: "WaxAndWane",
     platforms: [.macOS(.v13)],
     dependencies: [
         .package(
@@ -12,7 +12,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "AmbientBacklight",
+            name: "WaxAndWane",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
