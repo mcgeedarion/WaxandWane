@@ -60,6 +60,10 @@ class Settings:
     screen_max: float = 1.0
     invert_screen: bool = False     # dark room → dimmer screen
 
+    # Restore-on-exit values
+    default_keyboard_brightness: float = 0.5
+    default_screen_brightness: float = 0.7
+
     # Privacy / runtime guard
     max_runtime_sec: float = 3600.0     # 0 = unlimited
     reminder_interval_sec: float = 900.0  # 0 = no reminders
@@ -72,17 +76,23 @@ DEFAULT_SETTINGS = Settings()
 # Subprocess safety
 # ---------------------------------------------------------------------------
 
+# SAFE_EXEC_DIRS is the canonical list; SAFE_ENV["PATH"] is the string form
+# passed to shutil.which (which expects a colon-separated string, not a list).
 SAFE_EXEC_DIRS = ("/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")
 SAFE_ENV = {"PATH": ":".join(SAFE_EXEC_DIRS), "HOME": os.path.expanduser("~")}
 TRUSTED_CWD = os.path.expanduser("~")
 
 
 def _resolve_executable(name: str) -> Optional[str]:
-    """Resolve a helper name to an absolute path under SAFE_EXEC_DIRS only."""
+    """Resolve a helper name to an absolute path under SAFE_EXEC_DIRS only.
+
+    Also validates the symlink target so a malicious symlink pointing outside
+    the trusted directories cannot bypass the allowlist.
+    """
     resolved = shutil.which(name, path=SAFE_ENV["PATH"])
     if not resolved:
         return None
-    real = os.path.realpath(resolved)
+    real = os.path.realpath(resolved)  # follow symlinks fully
     if any(
         real.startswith(prefix + os.sep) or real == prefix
         for prefix in SAFE_EXEC_DIRS
@@ -100,8 +110,7 @@ def _resolve_executable(name: str) -> Optional[str]:
 class BrightnessBackend:
     """Wraps a CLI tool that accepts a normalised [0, 1] brightness value."""
     name: str
-    executable: str
-    # Converts a clamped [0, 1] float to the CLI argument list
+    executable: str          # resolved absolute path, set at construction
     args_builder: Callable[[float], List[str]]
     out_min: float
     out_max: float
@@ -110,28 +119,39 @@ class BrightnessBackend:
         return float(np.clip(value, self.out_min, self.out_max))
 
 
-_KEYBOARD_CANDIDATES: List[BrightnessBackend] = [
-    BrightnessBackend("kbrightness",       "", lambda v: [f"{v:.3f}"],          0.0, 1.0),
-    BrightnessBackend("mac-brightnessctl", "", lambda v: [str(int(v * 100))],   0.0, 1.0),
+# Candidate templates – executable is filled in by detect_backend.
+_KEYBOARD_CANDIDATES = [
+    ("kbrightness",       lambda v: [f"{v:.3f}"],          0.0, 1.0),
+    ("mac-brightnessctl", lambda v: [str(int(v * 100))],   0.0, 1.0),
 ]
 
-_SCREEN_CANDIDATES: List[BrightnessBackend] = [
-    BrightnessBackend("brightness", "", lambda v: ["-l", f"{v:.3f}"],           0.0, 1.0),
-    BrightnessBackend("ddcctl",     "", lambda v: ["-b", str(int(v * 100))],    0.0, 1.0),
+_SCREEN_CANDIDATES = [
+    ("brightness", lambda v: ["-l", f"{v:.3f}"],           0.0, 1.0),
+    ("ddcctl",     lambda v: ["-b", str(int(v * 100))],    0.0, 1.0),
 ]
 
 
 def detect_backend(
-    candidates: List[BrightnessBackend],
+    candidates: list,
     label: str,
 ) -> Optional[BrightnessBackend]:
-    """Return the first candidate whose executable resolves under SAFE_EXEC_DIRS."""
-    for backend in candidates:
-        resolved = _resolve_executable(backend.name)
+    """Return the first candidate whose executable resolves under SAFE_EXEC_DIRS.
+
+    Constructs a fresh BrightnessBackend with the resolved path so the
+    candidate templates remain immutable and detect_backend is safe to call
+    multiple times.
+    """
+    for name, builder, out_min, out_max in candidates:
+        resolved = _resolve_executable(name)
         if resolved:
-            log.info("Using %s backend: %s (%s)", label, backend.name, resolved)
-            backend.executable = resolved
-            return backend
+            log.info("Using %s backend: %s (%s)", label, name, resolved)
+            return BrightnessBackend(
+                name=name,
+                executable=resolved,
+                args_builder=builder,
+                out_min=out_min,
+                out_max=out_max,
+            )
     log.warning("No %s backend found. %s control disabled.", label, label.capitalize())
     return None
 
@@ -218,6 +238,8 @@ class RuntimeGuard:
 # ---------------------------------------------------------------------------
 
 def capture_mean_brightness(cap: cv2.VideoCapture, n_frames: int = 3) -> float:
+    """Average luma across n_frames. No inter-frame sleep — callers throttle
+    via poll_interval_sec instead."""
     values = []
     for _ in range(n_frames):
         ret, frame = cap.read()
@@ -226,7 +248,6 @@ def capture_mean_brightness(cap: cv2.VideoCapture, n_frames: int = 3) -> float:
         small = cv2.resize(frame, (64, 48))
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         values.append(float(np.mean(hsv[:, :, 2]) / 255.0))
-        time.sleep(0.05)
     return float(np.mean(values)) if values else 0.5
 
 
@@ -263,6 +284,12 @@ def run(s: Settings = DEFAULT_SETTINGS) -> None:
     last_screen   = -1.0
     guard = RuntimeGuard(s)
 
+    def restore_defaults() -> None:
+        if keyboard_backend:
+            run_backend(keyboard_backend, s.default_keyboard_brightness, "keyboard brightness")
+        if screen_backend:
+            run_backend(screen_backend, s.default_screen_brightness, "screen brightness")
+
     log.info("Ambient loop started. Ctrl+C to stop.")
     try:
         while True:
@@ -296,10 +323,7 @@ def run(s: Settings = DEFAULT_SETTINGS) -> None:
     except KeyboardInterrupt:
         log.info("Interrupted. Restoring defaults.")
     finally:
-        if keyboard_backend:
-            run_backend(keyboard_backend, 0.5, "keyboard brightness")
-        if screen_backend:
-            run_backend(screen_backend, 0.7, "screen brightness")
+        restore_defaults()
         cap.release()
 
 

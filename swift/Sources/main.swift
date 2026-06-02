@@ -21,6 +21,10 @@ struct Settings {
     let screenMax: Float = 1.0
     let invertScreen: Bool = false    // dark room → dimmer screen
 
+    // Restore-on-exit values (single source of truth — used by restoreDefaults)
+    let defaultKeyboardBrightness: Float = 0.5
+    let defaultScreenBrightness: Float   = 0.7
+
     // Privacy / runtime guard
     let maxCameraRuntimeSeconds: TimeInterval = 3600   // 0 = unlimited
     let reminderIntervalSeconds: TimeInterval = 900    // 0 = no reminders
@@ -53,14 +57,24 @@ func postNotification(title: String, body: String) {
 let trustedWorkingDirectory = NSHomeDirectory()
 let safePathEntries = ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"]
 
+/// Resolves `command` to an absolute path that lies within `safePathEntries`.
+/// Symlinks are fully resolved so a malicious link pointing outside the
+/// trusted directories cannot bypass the allowlist.
 func resolveExecutable(_ command: String) -> String? {
     let fm = FileManager.default
     for base in safePathEntries {
         let candidate = URL(fileURLWithPath: base)
             .appendingPathComponent(command).path
-        if fm.isExecutableFile(atPath: candidate) {
-            return URL(fileURLWithPath: candidate)
-                .resolvingSymlinksInPath().path
+        guard fm.isExecutableFile(atPath: candidate) else { continue }
+        let real = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+        // Validate the symlink target is still inside a trusted directory.
+        let inTrusted = safePathEntries.contains { prefix in
+            real == prefix || real.hasPrefix(prefix + "/")
+        }
+        if inTrusted {
+            return real
+        } else {
+            fputs("Warning: ignoring unsafe symlink target for \(command): \(real)\n", stderr)
         }
     }
     return nil
@@ -167,17 +181,42 @@ func mapAmbient(_ ambient: Float, minValue: Float, maxValue: Float, invert: Bool
            : minValue + ambient * (maxValue - minValue)
 }
 
+// Ring buffer for O(1) append + O(n) mean without array shifting.
+struct RingBuffer {
+    private var buf: [Float]
+    private var index = 0
+    private var count = 0
+    let capacity: Int
+
+    init(capacity: Int) {
+        self.capacity = capacity
+        self.buf = [Float](repeating: 0, count: capacity)
+    }
+
+    mutating func append(_ value: Float) {
+        buf[index] = value
+        index = (index + 1) % capacity
+        if count < capacity { count += 1 }
+    }
+
+    var mean: Float {
+        guard count > 0 else { return 0 }
+        return buf[0..<count].reduce(0, +) / Float(count)
+    }
+
+    var isEmpty: Bool { count == 0 }
+}
+
 /// Pure – no I/O. Returns nil for each target when change is below threshold.
 func computeTargets(
-    history: inout [Float],
+    history: inout RingBuffer,
     ambientNow: Float,
     lastKeyboard: Float,
     lastScreen: Float,
     s: Settings
 ) -> (keyboard: Float?, screen: Float?) {
     history.append(ambientNow)
-    if history.count > s.smoothingWindow { history.removeFirst() }
-    let smoothed = history.reduce(0, +) / Float(history.count)
+    let smoothed = history.mean
 
     let kbd = mapAmbient(smoothed, minValue: s.keyboardMin, maxValue: s.keyboardMax, invert: s.invertKeyboard)
     let scr = mapAmbient(smoothed, minValue: s.screenMin,   maxValue: s.screenMax,   invert: s.invertScreen)
@@ -190,6 +229,9 @@ func computeTargets(
 
 // MARK: - Runtime guard
 
+/// Called exclusively from the main thread. Thread-safety note: `maybeRemind`
+/// writes `lastReminder` only from the main run loop; `BrightnessSampler`
+/// callbacks run on a separate DispatchQueue and never touch RuntimeGuard.
 final class RuntimeGuard {
     private let maxRuntime: TimeInterval
     private let reminderInterval: TimeInterval
@@ -264,6 +306,8 @@ final class BrightnessSampler: NSObject, AVCaptureVideoDataOutputSampleBufferDel
 
         print("Warming up camera auto-exposure (3 s)…")
         session.startRunning()
+        // Note: this blocks the calling (main) thread during startup only,
+        // before the run loop begins. Acceptable for a CLI tool.
         Thread.sleep(forTimeInterval: 3.0)
         print("Ready.\n")
     }
@@ -305,6 +349,11 @@ if keyboardBackend == nil && screenBackend == nil {
     exit(1)
 }
 
+func restoreDefaults() {
+    keyboardBackend?.set(settings.defaultKeyboardBrightness)
+    screenBackend?.set(settings.defaultScreenBrightness)
+}
+
 // Request camera permission
 let semaphore = DispatchSemaphore(value: 0)
 AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -330,18 +379,17 @@ postNotification(
     body: "Camera is now active to adjust keyboard and screen brightness."
 )
 
-var history   = [Float]()
+var history = RingBuffer(capacity: settings.smoothingWindow)
 var lastKeyboard: Float = -1.0
 var lastScreen:   Float = -1.0
-let guard_ = RuntimeGuard(s: settings)
+let runtimeGuard = RuntimeGuard(s: settings)
 
 // Graceful shutdown on Ctrl+C
 let sigSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 signal(SIGINT, SIG_IGN)
 sigSrc.setEventHandler {
     print("\nRestoring defaults…")
-    keyboardBackend?.set(0.5)
-    screenBackend?.set(0.7)
+    restoreDefaults()
     sampler.stop()
     exit(0)
 }
@@ -350,14 +398,13 @@ sigSrc.resume()
 print("Ambient backlight running (camera active). Press Ctrl+C to stop.\n")
 
 while true {
-    if guard_.shouldExit {
+    if runtimeGuard.shouldExit {
         print("Max runtime reached. Stopping.")
-        keyboardBackend?.set(0.5)
-        screenBackend?.set(0.7)
+        restoreDefaults()
         sampler.stop()
         break
     }
-    guard_.maybeRemind()
+    runtimeGuard.maybeRemind()
 
     let ambientNow = sampler.currentBrightness
     let (newKbd, newScr) = computeTargets(
@@ -377,7 +424,7 @@ while true {
         lastScreen = v
     }
 
-    let smoothed = history.isEmpty ? ambientNow : history.reduce(0, +) / Float(history.count)
+    let smoothed = history.isEmpty ? ambientNow : history.mean
     print(String(format: "Ambient: %.3f → Keyboard: %.0f%% | Screen: %.0f%%",
                  smoothed, lastKeyboard * 100, lastScreen * 100))
 
