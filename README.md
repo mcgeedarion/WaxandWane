@@ -77,7 +77,7 @@ Run diagnostics after installing helpers:
 ```bash
 wax-and-wane doctor
 # or from source
-cd swift && swift run --quiet WaxAndWane doctor
+cd swift && swift run --quiet wax-and-wane doctor
 ```
 
 ## Camera Permission
@@ -92,7 +92,7 @@ Grant your terminal or installed app camera access:
 ```bash
 cd swift
 swift build -c release
-.build/release/WaxAndWane run
+.build/release/wax-and-wane run
 ```
 
 Press `Ctrl+C` to stop. Channels controlled by Wax and Wane restore to the original startup brightness when supported, otherwise to configured defaults.
@@ -100,14 +100,14 @@ Press `Ctrl+C` to stop. Channels controlled by Wax and Wane restore to the origi
 Run only one channel manually while leaving the other under system control:
 
 ```bash
-.build/release/WaxAndWane run --screen-control manual --manual-screen 0.7 --keyboard-control system
-.build/release/WaxAndWane run --keyboard-control manual --manual-keyboard 0.4 --screen-control system
+.build/release/wax-and-wane run --screen-control manual --manual-screen 0.7 --keyboard-control system
+.build/release/wax-and-wane run --keyboard-control manual --manual-keyboard 0.4 --screen-control system
 ```
 
 Preview backend writes without changing brightness:
 
 ```bash
-.build/release/WaxAndWane run --dry-run --max-runtime 30
+.build/release/wax-and-wane run --dry-run --max-runtime 30
 ```
 
 ### Python (script / dev)
@@ -133,7 +133,7 @@ Generate a complete config template:
 ```bash
 wax-and-wane print-default-config > ~/.config/wax-and-wane/config.json
 # or from source
-cd swift && swift run --quiet WaxAndWane print-default-config > ../examples/config.generated.json
+cd swift && swift run --quiet wax-and-wane print-default-config > ../examples/config.generated.json
 ```
 
 The Swift example is `examples/config.json`; the Python reference example is `examples/python-config.json`. CLI flags override JSON config, and JSON config overrides built-in defaults.
@@ -164,6 +164,14 @@ Key fields:
 4. Set `ambientBright` / `ambient_bright` to that bright-room value.
 5. Adjust `outputGamma`: values above `1.0` make low light less aggressive; values below `1.0` brighten earlier.
 
+### Validate configuration before launch
+
+```bash
+cd swift && swift run --quiet wax-and-wane validate-config ../examples/config.json
+# or after install
+wax-and-wane validate-config ~/.config/wax-and-wane/config.json
+```
+
 ## Install and run at login
 
 Install the Swift release binary and create a default config if one does not exist:
@@ -177,6 +185,8 @@ Install and load a LaunchAgent that runs at login:
 ```bash
 make launchagent-install
 ```
+
+The LaunchAgent is throttled and only automatically restarts after unsuccessful exits, which prevents tight crash loops from repeated configuration or permission failures.
 
 Unload and remove the LaunchAgent:
 
@@ -197,6 +207,8 @@ The LaunchAgent template is `com.user.waxandwane.plist`; `make launchagent-insta
 ```bash
 python3 -m pytest -q python/Tests
 cd swift && swift test
+make release
+make dist
 ```
 
-On Linux, the Swift executable builds only the non-camera diagnostic/config path. The actual camera loop requires macOS AVFoundation, so CI runs Swift build/test on macOS.
+On Linux, the Swift executable builds only the non-camera diagnostic/config path. The actual camera loop requires macOS AVFoundation, so CI runs Swift build/test on macOS. `make release` runs release-mode tests and CLI smoke checks; `make dist` creates a checksum file for the release binary.

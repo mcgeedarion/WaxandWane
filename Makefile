@@ -6,10 +6,21 @@ BINARY := $(PREFIX)/wax-and-wane
 CONFIG := $(CONFIG_DIR)/config.json
 PLIST_TEMPLATE := com.user.waxandwane.plist
 
-.PHONY: build test install uninstall launchagent-install launchagent-uninstall doctor
+.PHONY: build test release dist install uninstall launchagent-install launchagent-uninstall doctor validate-config
 
 build:
 	cd $(SWIFT_DIR) && swift build -c release
+
+release: build
+	python3 -m pytest -q python/Tests
+	cd $(SWIFT_DIR) && swift test -c release
+	cd $(SWIFT_DIR) && .build/release/wax-and-wane print-default-config >/dev/null
+	cd $(SWIFT_DIR) && .build/release/wax-and-wane validate-config ../examples/config.json
+
+dist: release
+	mkdir -p dist
+	cp $(SWIFT_DIR)/.build/release/wax-and-wane dist/wax-and-wane
+	cd dist && shasum -a 256 wax-and-wane > wax-and-wane.sha256
 
 test:
 	python3 -m pytest -q python/Tests
@@ -17,8 +28,8 @@ test:
 
 install: build
 	mkdir -p $(PREFIX) $(CONFIG_DIR)
-	cp $(SWIFT_DIR)/.build/release/WaxAndWane $(BINARY)
-	@if [ ! -f $(CONFIG) ]; then cp examples/config.json $(CONFIG); fi
+	install -m 0755 $(SWIFT_DIR)/.build/release/wax-and-wane $(BINARY)
+	@if [ ! -f $(CONFIG) ]; then install -m 0644 examples/config.json $(CONFIG); fi
 	@echo "Installed $(BINARY) and config $(CONFIG)"
 
 uninstall: launchagent-uninstall
@@ -39,4 +50,7 @@ launchagent-uninstall:
 	@if [ -f $(LAUNCH_AGENT) ]; then launchctl unload $(LAUNCH_AGENT) >/dev/null 2>&1 || true; rm -f $(LAUNCH_AGENT); fi
 
 doctor:
-	$(BINARY) doctor || cd $(SWIFT_DIR) && swift run WaxAndWane doctor
+	$(BINARY) doctor || cd $(SWIFT_DIR) && swift run wax-and-wane doctor
+
+validate-config:
+	cd $(SWIFT_DIR) && swift run wax-and-wane validate-config ../examples/config.json

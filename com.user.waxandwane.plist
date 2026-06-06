@@ -18,7 +18,16 @@
   <true/>
 
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
 
   <key>StandardOutPath</key>
   <string>__WAX_AND_WANE_LOG_DIR__/wax-and-wane.out.log</string>

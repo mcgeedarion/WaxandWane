@@ -5,7 +5,7 @@ struct CLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "wax-and-wane",
         abstract: "Adjust keyboard/screen brightness based on ambient light.",
-        subcommands: [Doctor.self, PrintDefaultConfig.self],
+        subcommands: [Doctor.self, PrintDefaultConfig.self, ValidateConfig.self],
         defaultSubcommand: Run.self
     )
 }
@@ -18,6 +18,18 @@ struct PrintDefaultConfig: ParsableCommand {
 struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "doctor", abstract: "Check helpers, platform support, and privacy prerequisites.")
     func run() throws { runDoctor() }
+}
+
+struct ValidateConfig: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "validate-config", abstract: "Validate a JSON config file without starting the camera loop.")
+
+    @Argument(help: "JSON config file path to validate") var path: String
+
+    func run() throws {
+        let settings = try loadConfig(path: path)
+        try validateSettings(settings)
+        print("Config valid: \(path)")
+    }
 }
 
 struct Run: ParsableCommand {
@@ -89,4 +101,6 @@ struct Run: ParsableCommand {
     }
 }
 
-CLI.main()
+public func runWaxAndWaneCLI() {
+    CLI.main()
+}

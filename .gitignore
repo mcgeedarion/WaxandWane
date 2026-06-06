@@ -1,2 +1,7 @@
 __pycache__/
 *.py[cod]
+
+# Build and release artifacts
+.build/
+swift/.build/
+dist/

@@ -23,3 +23,5 @@ jobs:
       - uses: actions/checkout@v4
       - run: cd swift && swift test
       - run: cd swift && swift build -c release
+      - run: cd swift && .build/release/wax-and-wane print-default-config >/tmp/wax-and-wane.config.json
+      - run: cd swift && .build/release/wax-and-wane validate-config ../examples/config.json
