@@ -11,22 +11,31 @@ let package = Package(
         ),
     ],
     targets: [
-        .executableTarget(
-            name: "WaxAndWane",
+        .target(
+            name: "WaxAndWaneCore",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "Sources",
+            path: "Sources/WaxAndWaneCore"
+        ),
+        .executableTarget(
+            name: "WaxAndWane",
+            dependencies: [
+                "WaxAndWaneCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/WaxAndWane",
             linkerSettings: [
-                .linkedFramework("IOKit"),
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("CoreMedia"),
-                .linkedFramework("CoreVideo"),
-                .linkedFramework("Accelerate")
+                .linkedFramework("IOKit", .when(platforms: [.macOS])),
+                .linkedFramework("AVFoundation", .when(platforms: [.macOS])),
+                .linkedFramework("CoreMedia", .when(platforms: [.macOS])),
+                .linkedFramework("CoreVideo", .when(platforms: [.macOS])),
+                .linkedFramework("Accelerate", .when(platforms: [.macOS]))
             ]
         ),
         .testTarget(
             name: "PolicyTests",
+            dependencies: ["WaxAndWaneCore"],
             path: "Tests"
         ),
     ]

@@ -6,8 +6,20 @@ The canonical Python source now mirrors the Swift layout at
 ``python3 ambient_backlight.py`` continue to work.
 """
 
-from python.Sources.main import _build_settings, _parse_args, run
+from python.Sources.main import (
+    _build_settings,
+    _parse_args,
+    default_config_json,
+    doctor,
+    run,
+)
 
 
 if __name__ == "__main__":
-    run(_build_settings(_parse_args()))
+    args = _parse_args()
+    if getattr(args, "print_default_config", False):
+        print(default_config_json())
+    elif getattr(args, "doctor", False):
+        doctor()
+    else:
+        run(_build_settings(args))

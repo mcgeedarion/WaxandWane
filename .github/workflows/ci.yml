@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, work]
+
+jobs:
+  python-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip pytest
+      - run: python -m pytest -q python/Tests
+      - run: python -m py_compile python/Sources/main.py ambient_backlight.py
+
+  swift-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd swift && swift test
+      - run: cd swift && swift build -c release

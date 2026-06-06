@@ -1,73 +1,55 @@
 # Wax and Wane
 
-Automatically adjusts macOS keyboard backlight and display brightness based
-on ambient light estimated from the built-in webcam.
+Automatically adjusts macOS keyboard backlight and display brightness based on ambient light estimated from the built-in webcam.
 
 ## Implementations
 
 | Path | Language | Recommended use |
 |---|---|---|
-| `swift/` | Swift (native) | **Primary — use this for daily use / LaunchAgent** |
-| `python/` | Python | Reference / developer implementation mirroring the Swift layout |
+| `swift/` | Swift (native) | **Primary — daily use / LaunchAgent** |
+| `python/` | Python | Reference / developer implementation mirroring the Swift policy |
 | `ambient_backlight.py` | Python | Compatibility launcher for existing scripts |
 
-Both share the same algorithm, security model, and mirrored source layout (`Sources/main.*` plus `Tests/PolicyTests.*`) where language conventions allow. Prefer the Swift binary
-for production because it uses AVFoundation natively (no pip dependencies,
-no OpenCV), integrates with Notification Center, and compiles to a standalone
-executable.
+The Swift binary uses AVFoundation natively, integrates with Notification Center, and builds to a standalone executable. The Python implementation is kept as a reference and testable mirror of the same policy decisions.
 
-## Cross-language Layout
+## What's improved
 
-The Python and Swift implementations intentionally use matching file and test
-names where practical:
-
-| Concern | Swift | Python |
-|---|---|---|
-| Main entry point | `swift/Sources/main.swift` | `python/Sources/main.py` |
-| Policy tests | `swift/Tests/PolicyTests.swift` | `python/Tests/PolicyTests.py` |
-| Compatibility launcher | N/A | `ambient_backlight.py` |
-
-Core policy symbols also use matching names adapted to language style, such as
-`mapAmbient` in Swift and `map_ambient` in Python, with `ComputeTargetsTests`
-and `MapAmbientTests` in both test suites.
+- **Config-first workflow**: generate a full JSON template with `wax-and-wane print-default-config`; see `examples/config.json`.
+- **Strict validation**: brightness ranges, timing values, calibration bounds, and mode names are checked before the camera starts.
+- **Original-brightness restore**: supported backends are queried at startup and restored on exit; configured defaults remain the fallback.
+- **Calibration and hysteresis**: ambient samples can be normalized with dark/bright calibration points, gamma, separate rise/fall thresholds, and a minimum write interval.
+- **Backend selection and diagnostics**: choose helpers with `--keyboard-backend` / `--screen-backend`, and run `wax-and-wane doctor` for setup checks.
+- **Install and LaunchAgent workflow**: `make install` and `make launchagent-install` install the release binary, config, plist, and logs.
+- **CI-ready layout**: Linux-safe Python checks and macOS Swift checks are defined in `.github/workflows/ci.yml`.
+- **Modular Swift sources**: policy, settings, backends, CLI, and macOS camera loop are split across focused files.
+- **Privacy controls**: startup/periodic reminders remain, and `--dry-run` previews decisions without changing brightness.
 
 ## How It Works
 
-1. **Webcam → ambient light**: Samples camera frames, extracts luma (Y plane
-   in Swift, HSV-V in Python), averages across a rolling window.
-2. **Policy mapping**: Independently maps the smoothed ambient value to keyboard
-   and/or screen brightness with configurable min/max and optional inversion.
-   Each channel can also be fixed manually or left to system control.
-3. **Threshold guard**: Only writes when brightness changes by > 2% to avoid
-   constant subprocess churn.
-4. **Privacy guard**: Sends a Notification Center banner on start and
-   periodic reminders while the camera is active. Optionally auto-stops
-   after a configurable runtime limit.
-5. **CLI backends**: Shells out to `kbrightness`/`mac-brightnessctl` (keyboard)
-   and `brightness`/`ddcctl` (screen). Executable paths are resolved at
-   startup and validated against an allow-list of safe directories.
+1. **Webcam → ambient light**: Samples camera frames, extracts luma (Y plane in Swift, HSV-V in Python), and averages across a rolling window.
+2. **Calibration**: Normalizes smoothed ambient light between `ambientDark` and `ambientBright`, then applies `outputGamma`.
+3. **Policy mapping**: Independently maps calibrated ambient light to keyboard and/or screen brightness with min/max, manual, system, and inversion controls.
+4. **Hysteresis guards**: Applies delta thresholds, optional rise/fall thresholds, and an optional minimum write interval to reduce brightness oscillation.
+5. **Privacy guard**: Sends a Notification Center banner on start and periodic reminders while the camera is active. Optional auto-stop is controlled by `maxCameraRuntimeSeconds`.
+6. **CLI backends**: Shells out to `kbrightness`/`mac-brightnessctl` (keyboard) and `brightness`/`ddcctl` (screen). Executable paths are resolved at startup and validated against safe directories.
 
 ## Security Model
 
-- **No PATH hijacking**: helper executables are resolved once at startup via
-  an allow-list (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`). The
-  resolved absolute path is stored and used for all subsequent invocations.
-- **Sanitized subprocess environment**: child processes receive only a
-  minimal, fixed environment (`PATH`, `HOME`, locale). `LD_PRELOAD`,
-  `DYLD_INSERT_LIBRARIES`, and `PYTHONPATH` are explicitly stripped.
-- **Trusted CWD**: subprocesses are always launched with `cwd` set to `$HOME`.
-- **No shell expansion**: all commands are passed as argument arrays, never
-  through a shell, so there is no command-injection surface.
-- **Camera privacy**: Notification Center banner on start and configurable
-  periodic reminders. Optional auto-stop (`maxCameraRuntimeSeconds`).
+- **No PATH hijacking**: helper executables are resolved once at startup via an allow-list (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`). The resolved absolute path is used for subsequent invocations.
+- **Sanitized subprocess environment**: child processes receive a minimal fixed environment (`PATH`, `HOME`, locale). Dangerous dynamic-loader and Python path variables are not passed through.
+- **Trusted CWD**: subprocesses are launched from `$HOME`.
+- **No shell expansion**: commands are passed as argument arrays, never through a shell.
+- **Camera privacy**: startup notification, periodic reminders, dry-run mode, and optional auto-stop.
 
 ## Requirements
 
 ### Swift binary (recommended)
-- macOS 13 (Ventura) or later
+
+- macOS 13 Ventura or later
 - Swift toolchain (`xcode-select --install` or Xcode)
 
 ### Python script
+
 - Python 3.8+
 - `pip install opencv-python numpy`
 
@@ -76,10 +58,8 @@ and `MapAmbientTests` in both test suites.
 ### Keyboard (install one)
 
 ```bash
-# Option 1 — kbrightness
 brew install kbrightness
-
-# Option 2 — mac-brightnessctl
+# or
 brew tap rakalex/mac-brightnessctl
 brew install mac-brightnessctl
 ```
@@ -87,17 +67,23 @@ brew install mac-brightnessctl
 ### Screen (install one)
 
 ```bash
-# Option 1 — brightness (built-in display)
 brew install brightness
-
-# Option 2 — ddcctl (external DDC display)
+# or, for some external DDC displays
 brew install ddcctl
+```
+
+Run diagnostics after installing helpers:
+
+```bash
+wax-and-wane doctor
+# or from source
+cd swift && swift run --quiet WaxAndWane doctor
 ```
 
 ## Camera Permission
 
-Grant your terminal / app camera access:
-**System Settings → Privacy & Security → Camera**
+Grant your terminal or installed app camera access:
+**System Settings → Privacy & Security → Camera**.
 
 ## Usage
 
@@ -106,19 +92,22 @@ Grant your terminal / app camera access:
 ```bash
 cd swift
 swift build -c release
-.build/release/WaxAndWane
+.build/release/WaxAndWane run
 ```
 
-Press `Ctrl+C` to stop. Channels controlled by Wax and Wane restore to defaults.
+Press `Ctrl+C` to stop. Channels controlled by Wax and Wane restore to the original startup brightness when supported, otherwise to configured defaults.
 
 Run only one channel manually while leaving the other under system control:
 
 ```bash
-# Fix display brightness and leave keyboard backlight untouched.
-.build/release/WaxAndWane --screen-control manual --manual-screen 0.7 --keyboard-control system
+.build/release/WaxAndWane run --screen-control manual --manual-screen 0.7 --keyboard-control system
+.build/release/WaxAndWane run --keyboard-control manual --manual-keyboard 0.4 --screen-control system
+```
 
-# Fix keyboard backlight and leave display brightness untouched.
-.build/release/WaxAndWane --keyboard-control manual --manual-keyboard 0.4 --screen-control system
+Preview backend writes without changing brightness:
+
+```bash
+.build/release/WaxAndWane run --dry-run --max-runtime 30
 ```
 
 ### Python (script / dev)
@@ -130,41 +119,84 @@ python3 ambient_backlight.py
 python3 python/Sources/main.py
 ```
 
-### Configuration
+Python diagnostics and config template commands:
 
-Edit the `Settings` struct in `swift/Sources/main.swift` (or the `Settings`
-dataclass in `python/Sources/main.py`):
+```bash
+python3 python/Sources/main.py --doctor
+python3 python/Sources/main.py --print-default-config
+```
+
+## Configuration
+
+Generate a complete config template:
+
+```bash
+wax-and-wane print-default-config > ~/.config/wax-and-wane/config.json
+# or from source
+cd swift && swift run --quiet WaxAndWane print-default-config > ../examples/config.generated.json
+```
+
+The Swift example is `examples/config.json`; the Python reference example is `examples/python-config.json`. CLI flags override JSON config, and JSON config overrides built-in defaults.
+
+Key fields:
 
 | Field | Default | Description |
-|---|---|---|
-| `pollIntervalSeconds` / `poll_interval_sec` | `2.0` | Seconds between samples |
-| `smoothingWindow` / `smoothing_window` | `5` | Rolling-average window size |
-| `changeThreshold` / `change_threshold` | `0.02` | Min brightness delta to trigger a write |
-| `keyboardMin/Max` / `keyboard_min/max` | `0.0 / 1.0` | Keyboard output range |
-| `screenMin/Max` / `screen_min/max` | `0.2 / 1.0` | Screen output range |
-| `invertKeyboard` / `invert_keyboard` | `false` | Dark room → dimmer keyboard |
-| `keyboardControl` / `keyboard_control` | `auto` | Keyboard mode: `auto`, `manual`, or `system` |
-| `manualKeyboardBrightness` / `manual_keyboard_brightness` | `0.5` | Fixed keyboard brightness for manual mode |
-| `invertScreen` / `invert_screen` | `false` | Dark room → dimmer screen |
-| `screenControl` / `screen_control` | `auto` | Screen mode: `auto`, `manual`, or `system` |
-| `manualScreenBrightness` / `manual_screen_brightness` | `0.7` | Fixed screen brightness for manual mode |
-| `maxCameraRuntimeSeconds` / `max_runtime_sec` | `3600` | Auto-stop after N seconds (0 = unlimited) |
-| `reminderIntervalSeconds` / `reminder_interval_sec` | `900` | Notification reminder cadence (0 = off) |
+|---|---:|---|
+| `pollIntervalSeconds` / `poll_interval_sec` | `2.0` | Seconds between samples. |
+| `smoothingWindow` / `smoothing_window` | `5` | Rolling-average sample count; must be positive. |
+| `changeThreshold` / `change_threshold` | `0.02` | Default brightness delta required before writing. |
+| `riseThreshold` / `rise_threshold` | `null` | Optional increase-specific threshold. |
+| `fallThreshold` / `fall_threshold` | `null` | Optional decrease-specific threshold. |
+| `minUpdateIntervalSeconds` / `min_update_interval_sec` | `0.0` | Minimum seconds between backend writes. |
+| `ambientDark` / `ambient_dark` | `0.0` | Camera value representing room darkness. |
+| `ambientBright` / `ambient_bright` | `1.0` | Camera value representing room brightness. |
+| `outputGamma` / `output_gamma` | `1.0` | Non-linear response curve. |
+| `keyboardBackend` / `keyboard_backend` | `null` | Optional helper name (`kbrightness`, `mac-brightnessctl`). |
+| `screenBackend` / `screen_backend` | `null` | Optional helper name (`brightness`, `ddcctl`). |
+| `restoreOriginalBrightness` / `restore_original_brightness` | `true` | Restore startup brightness where a backend can query it. |
+| `dryRun` / `dry_run` | `false` | Log intended backend writes without applying them. |
 
-## Run as a Background Service (LaunchAgent)
+### Calibration workflow
 
-1. Build the Swift binary: `cd swift && swift build -c release`
-2. Edit `com.user.waxandwane.plist` — set the `ProgramArguments` path
-   to the compiled binary, e.g. `/Users/you/Wax and Wane/swift/.build/release/WaxAndWane`.
-3. Install and load:
+1. Sit in a dim room and run `--dry-run`; note the raw ambient value from logs.
+2. Set `ambientDark` / `ambient_dark` to that dim-room value.
+3. Sit in bright lighting and note the raw ambient value.
+4. Set `ambientBright` / `ambient_bright` to that bright-room value.
+5. Adjust `outputGamma`: values above `1.0` make low light less aggressive; values below `1.0` brighten earlier.
 
-```bash
-cp com.user.waxandwane.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.user.waxandwane.plist
-```
+## Install and run at login
 
-To stop:
+Install the Swift release binary and create a default config if one does not exist:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.user.waxandwane.plist
+make install
 ```
+
+Install and load a LaunchAgent that runs at login:
+
+```bash
+make launchagent-install
+```
+
+Unload and remove the LaunchAgent:
+
+```bash
+make launchagent-uninstall
+```
+
+Uninstall the binary but keep user config:
+
+```bash
+make uninstall
+```
+
+The LaunchAgent template is `com.user.waxandwane.plist`; `make launchagent-install` fills in the installed binary path, config path, and log directory.
+
+## Development
+
+```bash
+python3 -m pytest -q python/Tests
+cd swift && swift test
+```
+
+On Linux, the Swift executable builds only the non-camera diagnostic/config path. The actual camera loop requires macOS AVFoundation, so CI runs Swift build/test on macOS.

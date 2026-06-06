@@ -1,119 +1,27 @@
 import XCTest
-
-// Inline the pure functions under test so the test target compiles standalone
-// without depending on the executable target (which has top-level expressions).
-
-enum BrightnessControl {
-    case auto
-    case manual
-    case system
-}
-
-struct Settings {
-    var keyboardMin: Float = 0.0
-    var keyboardMax: Float = 1.0
-    var invertKeyboard: Bool = false
-    var keyboardControl: BrightnessControl = .auto
-    var manualKeyboardBrightness: Float = 0.5
-    var screenMin: Float = 0.2
-    var screenMax: Float = 1.0
-    var invertScreen: Bool = false
-    var screenControl: BrightnessControl = .auto
-    var manualScreenBrightness: Float = 0.7
-    var changeThreshold: Float = 0.02
-    var smoothingWindow: Int = 5
-}
-
-struct RingBuffer {
-    private var buf: [Float]
-    private var index = 0
-    private var count = 0
-    let capacity: Int
-
-    init(capacity: Int) {
-        self.capacity = capacity
-        self.buf = [Float](repeating: 0, count: capacity)
-    }
-
-    mutating func append(_ value: Float) {
-        buf[index] = value
-        index = (index + 1) % capacity
-        if count < capacity { count += 1 }
-    }
-
-    var mean: Float {
-        guard count > 0 else { return 0 }
-        return buf[0..<count].reduce(0, +) / Float(count)
-    }
-
-    var isEmpty: Bool { count == 0 }
-}
-
-func mapAmbient(_ ambient: Float, minValue: Float, maxValue: Float, invert: Bool) -> Float {
-    invert ? maxValue - ambient * (maxValue - minValue)
-           : minValue + ambient * (maxValue - minValue)
-}
-
-func targetForControl(
-    control: BrightnessControl,
-    smoothedAmbient: Float,
-    lastValue: Float,
-    minValue: Float,
-    maxValue: Float,
-    invert: Bool,
-    manualValue: Float,
-    changeThreshold: Float
-) -> Float? {
-    let target: Float
-    switch control {
-    case .system:
-        return nil
-    case .manual:
-        target = manualValue
-    case .auto:
-        target = mapAmbient(smoothedAmbient, minValue: minValue, maxValue: maxValue, invert: invert)
-    }
-    return abs(target - lastValue) > changeThreshold ? target : nil
-}
-
-func computeTargets(
-    history: inout RingBuffer,
-    ambientNow: Float,
-    lastKeyboard: Float,
-    lastScreen: Float,
-    s: Settings
-) -> (keyboard: Float?, screen: Float?) {
-    history.append(ambientNow)
-    let smoothed = history.mean
-    return (
-        targetForControl(control: s.keyboardControl, smoothedAmbient: smoothed,
-                         lastValue: lastKeyboard, minValue: s.keyboardMin,
-                         maxValue: s.keyboardMax, invert: s.invertKeyboard,
-                         manualValue: s.manualKeyboardBrightness, changeThreshold: s.changeThreshold),
-        targetForControl(control: s.screenControl, smoothedAmbient: smoothed,
-                         lastValue: lastScreen, minValue: s.screenMin,
-                         maxValue: s.screenMax, invert: s.invertScreen,
-                         manualValue: s.manualScreenBrightness, changeThreshold: s.changeThreshold)
-    )
-}
-
+@testable import WaxAndWaneCore
 
 final class MapAmbientTests: XCTestCase {
     func testNoInvertMin() {
         XCTAssertEqual(mapAmbient(0.0, minValue: 0.2, maxValue: 1.0, invert: false), 0.2, accuracy: 1e-5)
     }
+
     func testNoInvertMax() {
         XCTAssertEqual(mapAmbient(1.0, minValue: 0.2, maxValue: 1.0, invert: false), 1.0, accuracy: 1e-5)
     }
+
     func testNoInvertMid() {
         XCTAssertEqual(mapAmbient(0.5, minValue: 0.0, maxValue: 1.0, invert: false), 0.5, accuracy: 1e-5)
     }
+
     func testInvertMin() {
         XCTAssertEqual(mapAmbient(0.0, minValue: 0.0, maxValue: 1.0, invert: true), 1.0, accuracy: 1e-5)
     }
+
     func testInvertMax() {
         XCTAssertEqual(mapAmbient(1.0, minValue: 0.0, maxValue: 1.0, invert: true), 0.0, accuracy: 1e-5)
     }
+
     func testInvertMid() {
         XCTAssertEqual(mapAmbient(0.5, minValue: 0.0, maxValue: 1.0, invert: true), 0.5, accuracy: 1e-5)
     }
@@ -144,7 +52,8 @@ final class ComputeTargetsTests: XCTestCase {
 
     func testChangeAboveThresholdTriggers() {
         var h = makeHistory()
-        let s = Settings(changeThreshold: 0.02)
+        var s = Settings()
+        s.changeThreshold = 0.02
         _ = computeTargets(history: &h, ambientNow: 0.1,
                            lastKeyboard: -1.0, lastScreen: -1.0, s: s)
         let (kbd, scr) = computeTargets(history: &h, ambientNow: 0.9,
@@ -206,7 +115,6 @@ final class ComputeTargetsTests: XCTestCase {
         XCTAssertEqual(scr ?? -1, 1.0, accuracy: 1e-5)
     }
 
-
     func testManualKeyboardDoesNotAffectScreen() {
         var h = makeHistory()
         var s = Settings()
@@ -239,5 +147,30 @@ final class ComputeTargetsTests: XCTestCase {
         _ = computeTargets(history: &h, ambientNow: 0.3, lastKeyboard: -1, lastScreen: -1, s: s)
         _ = computeTargets(history: &h, ambientNow: 0.6, lastKeyboard: 0, lastScreen: 0, s: s)
         XCTAssertEqual(h.mean, 0.45, accuracy: 1e-5)
+    }
+}
+
+final class CalibrationTests: XCTestCase {
+    func testCalibrationGammaChangesTarget() {
+        XCTAssertEqual(normalizeAmbient(0.5, dark: 0.2, bright: 0.8, gamma: 2.0), 0.25, accuracy: 1e-5)
+    }
+
+    func testCalibrationClampsDarkAndBright() {
+        XCTAssertEqual(normalizeAmbient(0.0, dark: 0.2, bright: 0.8, gamma: 1.0), 0.0, accuracy: 1e-5)
+        XCTAssertEqual(normalizeAmbient(1.0, dark: 0.2, bright: 0.8, gamma: 1.0), 1.0, accuracy: 1e-5)
+    }
+}
+
+final class SettingsValidationTests: XCTestCase {
+    func testRejectsZeroSmoothingWindow() {
+        var s = Settings()
+        s.smoothingWindow = 0
+        XCTAssertThrowsError(try validateSettings(s))
+    }
+
+    func testDefaultConfigIncludesNullableTemplateKeys() {
+        let json = defaultConfigJSON()
+        XCTAssertTrue(json.contains("\"riseThreshold\" : null"))
+        XCTAssertTrue(json.contains("\"keyboardBackend\" : null"))
     }
 }

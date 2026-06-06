@@ -3,36 +3,26 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Label: unique identifier for this LaunchAgent -->
   <key>Label</key>
   <string>com.user.waxandwane</string>
 
-  <!--
-    ProgramArguments: path to the compiled Swift binary.
-    Build it first:
-      cd swift && swift build -c release
-    Then update the path below to the resulting binary, e.g.:
-      swift/.build/release/WaxAndWane
-  -->
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/swift/.build/release/WaxAndWane</string>
+    <string>__WAX_AND_WANE_BINARY__</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>__WAX_AND_WANE_CONFIG__</string>
   </array>
 
-  <!-- Run automatically when the user logs in -->
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- Restart automatically if the process exits -->
   <key>KeepAlive</key>
   <true/>
 
-  <!-- Recommended: redirect stdout/stderr to log files -->
-  <!-- Uncomment and update paths as needed:
   <key>StandardOutPath</key>
-  <string>/tmp/waxandwane.out.log</string>
+  <string>__WAX_AND_WANE_LOG_DIR__/wax-and-wane.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/waxandwane.err.log</string>
-  -->
+  <string>__WAX_AND_WANE_LOG_DIR__/wax-and-wane.err.log</string>
 </dict>
 </plist>

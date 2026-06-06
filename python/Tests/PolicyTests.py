@@ -138,3 +138,24 @@ class ComputeTargetsTests:
         kbd, scr = compute_targets(h, 0.0, -1.0, -1.0, s)
         assert kbd is None
         assert scr == pytest.approx(0.8)
+
+
+class SettingsValidationTests:
+    def test_rejects_zero_smoothing_window(self):
+        from python.Sources.main import validate_settings
+        s = _default_settings(smoothing_window=0)
+        with pytest.raises(ValueError, match="smoothing_window"):
+            validate_settings(s)
+
+    def test_rejects_invalid_brightness_range(self):
+        from python.Sources.main import validate_settings
+        s = _default_settings(screen_min=0.9, screen_max=0.2)
+        with pytest.raises(ValueError, match="screen_min"):
+            validate_settings(s)
+
+    def test_calibration_gamma_changes_auto_target(self):
+        h = deque(maxlen=1)
+        s = _default_settings(ambient_dark=0.2, ambient_bright=0.8, output_gamma=2.0,
+                              keyboard_min=0.0, keyboard_max=1.0, change_threshold=0.0)
+        kbd, _ = compute_targets(h, 0.5, -1.0, -1.0, s)
+        assert kbd == pytest.approx(0.25)
