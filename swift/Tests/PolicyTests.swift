@@ -156,3 +156,16 @@ final class CalibrationTests: XCTestCase {
         XCTAssertEqual(normalizeAmbient(1.0, dark: 0.2, bright: 0.8, gamma: 1.0), 1.0, accuracy: 1e-5)
     }
 }
+
+final class BackendSecurityTests: XCTestCase {
+    func testProcessLauncherTimesOutSlowHelper() {
+        let result = ProcessLauncher().run(
+            executablePath: "/bin/sleep",
+            arguments: ["2"],
+            timeout: 0.1
+        )
+
+        XCTAssertFalse(result.ok)
+        XCTAssertTrue(result.timedOut)
+    }
+}

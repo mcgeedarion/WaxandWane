@@ -39,6 +39,7 @@ The Swift binary uses AVFoundation natively, integrates with Notification Center
 - **Sanitized subprocess environment**: child processes receive a minimal fixed environment (`PATH`, `HOME`, locale). Dangerous dynamic-loader and Python path variables are not passed through.
 - **Trusted CWD**: subprocesses are launched from `$HOME`.
 - **No shell expansion**: commands are passed as argument arrays, never through a shell.
+- **Bounded helper execution**: backend helper reads/writes time out instead of blocking the camera loop indefinitely.
 - **Camera privacy**: startup notification, periodic reminders, dry-run mode, and optional auto-stop.
 
 ## Requirements

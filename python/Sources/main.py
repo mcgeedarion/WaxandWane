@@ -47,7 +47,8 @@ Config file (JSON, all keys optional):
 
 import argparse
 import json
-import subprocess
+# Backend helpers are allow-listed, resolved to absolute paths, and never run through a shell.
+import subprocess  # nosec B404
 import time
 import logging
 import sys
@@ -259,6 +260,7 @@ DEFAULT_SETTINGS = Settings()
 SAFE_EXEC_DIRS = ("/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")
 SAFE_ENV = {"PATH": ":".join(SAFE_EXEC_DIRS), "HOME": os.path.expanduser("~")}
 TRUSTED_CWD = os.path.expanduser("~")
+BACKEND_TIMEOUT_SEC = 5.0
 
 
 def _resolve_executable(name: str) -> Optional[str]:
@@ -299,14 +301,20 @@ class BrightnessBackend:
     def current_brightness(self) -> Optional[float]:
         if not self.read_builder or not self.read_parser:
             return None
-        result = subprocess.run(
-            [self.executable] + self.read_builder(),
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=TRUSTED_CWD,
-            env=SAFE_ENV,
-        )
+        try:
+            # The executable was resolved from SAFE_EXEC_DIRS before reaching this backend.
+            result = subprocess.run(  # nosec B603
+                [self.executable] + self.read_builder(),
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=TRUSTED_CWD,
+                env=SAFE_ENV,
+                timeout=BACKEND_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("Timed out reading brightness via %s after %.1fs", self.name, BACKEND_TIMEOUT_SEC)
+            return None
         if result.returncode != 0:
             return None
         return self.read_parser(result.stdout)
@@ -365,14 +373,18 @@ def run_backend(backend: BrightnessBackend, value: float, label: str) -> None:
         log.info("[dry-run] %s", " ".join(cmd))
         return
     try:
-        subprocess.run(
+        # The command uses a resolved absolute helper path and static argument builders.
+        subprocess.run(  # nosec B603
             cmd,
             check=True,
             capture_output=True,
             cwd=TRUSTED_CWD,
             env=SAFE_ENV,
+            timeout=BACKEND_TIMEOUT_SEC,
         )
         log.debug("Set %s via %s → %.3f", label, backend.name, clamped)
+    except subprocess.TimeoutExpired:
+        log.warning("Timed out setting %s via %s after %.1fs", label, backend.name, BACKEND_TIMEOUT_SEC)
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.decode(errors="ignore").strip()
         log.warning("Failed to set %s via %s: %s", label, backend.name, stderr)

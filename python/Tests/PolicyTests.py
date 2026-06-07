@@ -159,3 +159,37 @@ class SettingsValidationTests:
                               keyboard_min=0.0, keyboard_max=1.0, change_threshold=0.0)
         kbd, _ = compute_targets(h, 0.5, -1.0, -1.0, s)
         assert kbd == pytest.approx(0.25)
+
+
+class BackendSecurityTests:
+    def test_backend_read_timeout_returns_none(self, monkeypatch):
+        import sys
+        import python.Sources.main as main
+
+        monkeypatch.setattr(main, "BACKEND_TIMEOUT_SEC", 0.1)
+        backend = main.BrightnessBackend(
+            name="slow-read",
+            executable=sys.executable,
+            args_builder=lambda _: [],
+            out_min=0.0,
+            out_max=1.0,
+            read_builder=lambda: ["-c", "import time; time.sleep(2)"],
+            read_parser=lambda _: 0.5,
+        )
+
+        assert backend.current_brightness() is None
+
+    def test_backend_write_timeout_does_not_raise(self, monkeypatch):
+        import sys
+        import python.Sources.main as main
+
+        monkeypatch.setattr(main, "BACKEND_TIMEOUT_SEC", 0.1)
+        backend = main.BrightnessBackend(
+            name="slow-write",
+            executable=sys.executable,
+            args_builder=lambda _: ["-c", "import time; time.sleep(2)"],
+            out_min=0.0,
+            out_max=1.0,
+        )
+
+        main.run_backend(backend, 0.5, "test brightness")
