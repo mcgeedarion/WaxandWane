@@ -5,7 +5,7 @@ struct CLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "wax-and-wane",
         abstract: "Adjust keyboard/screen brightness based on ambient light.",
-        subcommands: [Doctor.self, PrintDefaultConfig.self, ValidateConfig.self],
+        subcommands: [Run.self, Doctor.self, PrintDefaultConfig.self, ValidateConfig.self],
         defaultSubcommand: Run.self
     )
 }

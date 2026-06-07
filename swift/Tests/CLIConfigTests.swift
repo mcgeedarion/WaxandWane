@@ -59,4 +59,12 @@ final class CLIConfigTests: XCTestCase {
         XCTAssertTrue(settings.invertScreen)
         XCTAssertFalse(settings.restoreOriginalBrightness)
     }
+
+    func testRunSubcommandParsesDocumentedInvocation() throws {
+        XCTAssertNoThrow(try CLI.parseAsRoot(["run", "--dry-run", "--max-runtime", "1"]))
+    }
+
+    func testDefaultRunParsesWithoutSubcommand() throws {
+        XCTAssertNoThrow(try CLI.parseAsRoot(["--dry-run", "--max-runtime", "1"]))
+    }
 }
