@@ -1,7 +1,13 @@
 import Foundation
+#if os(Linux)
+import Glibc
+#else
+import Darwin
+#endif
 
 let trustedWorkingDirectory = NSHomeDirectory()
 let safePathEntries = ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"]
+let backendCommandTimeoutSeconds: TimeInterval = 5.0
 
 func resolveExecutable(_ command: String) -> String? {
     let fm = FileManager.default
@@ -30,13 +36,18 @@ struct ProcessResult {
     let ok: Bool
     let stdout: String
     let stderr: String
+    let timedOut: Bool
 }
 
 struct ProcessLauncher {
     private let cwd = URL(fileURLWithPath: trustedWorkingDirectory)
     private let env = sanitizedEnvironment()
 
-    func run(executablePath: String, arguments: [String]) -> ProcessResult {
+    func run(
+        executablePath: String,
+        arguments: [String],
+        timeout: TimeInterval = backendCommandTimeoutSeconds
+    ) -> ProcessResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
@@ -46,14 +57,34 @@ struct ProcessLauncher {
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        func collect(ok: Bool, timedOut: Bool, fallbackError: String = "") -> ProcessResult {
+            let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let stderrData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderr = String(data: stderrData, encoding: .utf8) ?? fallbackError
+            return ProcessResult(ok: ok, stdout: stdout, stderr: stderr.isEmpty ? fallbackError : stderr, timedOut: timedOut)
+        }
+
         do {
             try process.run()
-            process.waitUntilExit()
-            let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let stderr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            return ProcessResult(ok: process.terminationStatus == 0, stdout: stdout, stderr: stderr)
+            let completed = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
+                completed.signal()
+            }
+
+            if completed.wait(timeout: .now() + timeout) == .timedOut {
+                process.terminate()
+                if completed.wait(timeout: .now() + 1.0) == .timedOut {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = completed.wait(timeout: .now() + 1.0)
+                }
+                return collect(ok: false, timedOut: true, fallbackError: "timed out after \(timeout)s")
+            }
+
+            return collect(ok: process.terminationStatus == 0, timedOut: false)
         } catch {
-            return ProcessResult(ok: false, stdout: "", stderr: error.localizedDescription)
+            return ProcessResult(ok: false, stdout: "", stderr: error.localizedDescription, timedOut: false)
         }
     }
 }
@@ -114,7 +145,9 @@ struct BrightnessBackend {
             return
         }
         let result = launcher.run(executablePath: executablePath, arguments: args)
-        if !result.ok {
+        if result.timedOut {
+            fputs("Warning: timed out setting \(kind.rawValue) brightness via \(name): \(result.stderr)\n", stderr)
+        } else if !result.ok {
             fputs("Warning: failed to set \(kind.rawValue) brightness via \(name): \(result.stderr)\n", stderr)
         }
     }
