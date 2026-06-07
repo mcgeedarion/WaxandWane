@@ -63,7 +63,11 @@ struct Run: ParsableCommand {
     @Flag(name: .customLong("no-restore-original-brightness"), help: "Restore configured defaults instead of startup brightness") var noRestoreOriginalBrightness: Bool = false
     @Option(name: .long, help: "Stop after this many seconds (0 = unlimited)") var maxRuntime: Double? = nil
 
-    func buildSettings() throws -> Settings {
+    private func cliHasLongFlag(_ name: String, in arguments: [String]) -> Bool {
+        arguments.contains { $0 == name || $0.hasPrefix("\(name)=") }
+    }
+
+    func buildSettings(cliArguments: [String] = CommandLine.arguments) throws -> Settings {
         var s = try config.map(loadConfig) ?? Settings()
         if let v = pollInterval { s.pollIntervalSeconds = v }
         if let v = smoothingWindow { s.smoothingWindow = v }
@@ -87,10 +91,12 @@ struct Run: ParsableCommand {
         if let v = defaultKeyboard { s.defaultKeyboardBrightness = v }
         if let v = defaultScreen { s.defaultScreenBrightness = v }
         if let v = maxRuntime { s.maxCameraRuntimeSeconds = v }
-        s.invertKeyboard = invertKeyboard
-        s.invertScreen = invertScreen
-        s.dryRun = dryRun
-        s.restoreOriginalBrightness = !noRestoreOriginalBrightness
+        if cliHasLongFlag("--invert-keyboard", in: cliArguments) { s.invertKeyboard = invertKeyboard }
+        if cliHasLongFlag("--invert-screen", in: cliArguments) { s.invertScreen = invertScreen }
+        if cliHasLongFlag("--dry-run", in: cliArguments) { s.dryRun = dryRun }
+        if cliHasLongFlag("--no-restore-original-brightness", in: cliArguments) {
+            s.restoreOriginalBrightness = !noRestoreOriginalBrightness
+        }
         try validateSettings(s)
         return s
     }
